@@ -10,3 +10,8 @@ rayon = { workspace = true }
 
 [dev-dependencies]
 rand_chacha = { workspace = true }
+criterion = { version = "0.5.1", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "eval_bench"
+harness = false
