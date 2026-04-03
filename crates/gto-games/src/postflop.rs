@@ -3,6 +3,8 @@ use gto_cfr::Game;
 use gto_core::{Action, Card, CardSet};
 use gto_eval::{evaluate_7, hand_class, HandStrength, NUM_CLASSES};
 use rand::Rng;
+use rustc_hash::FxHashMap;
+use std::sync::RwLock;
 
 /// Bet size configuration per position and street.
 #[derive(Clone, Debug)]
@@ -81,11 +83,20 @@ pub struct PostflopState {
     pub num_raises: u32,
 }
 
+/// Cache key for turn bucketing: 4 board cards sorted.
+fn turn_cache_key(board: &[Card]) -> u64 {
+    let mut cards = [board[0].0, board[1].0, board[2].0, board[3].0];
+    cards.sort();
+    (cards[0] as u64) | ((cards[1] as u64) << 8) | ((cards[2] as u64) << 16) | ((cards[3] as u64) << 24)
+}
+
 /// The postflop game implementing the Game trait for CFR.
 pub struct PostflopGame {
     pub config: PostflopConfig,
     /// Precomputed flop hand bucketing (None if num_buckets == 0).
     flop_bucketing: Option<HandBucketing>,
+    /// Cache for turn board bucketing. Key = sorted 4-card board encoded as u64.
+    turn_bucketing_cache: RwLock<FxHashMap<u64, HandBucketing>>,
 }
 
 impl PostflopGame {
@@ -102,6 +113,7 @@ impl PostflopGame {
         PostflopGame {
             config,
             flop_bucketing,
+            turn_bucketing_cache: RwLock::new(FxHashMap::default()),
         }
     }
 
@@ -124,26 +136,34 @@ impl PostflopGame {
                 ((strength as u64 * num_buckets as u64) / max_strength as u64).min(num_buckets as u64 - 1) as usize
             }
             4 => {
-                // Turn: average strength over remaining river cards
-                let mut total: f64 = 0.0;
-                let mut count: u32 = 0;
-                for r in 0..52u8 {
-                    let card = Card(r);
-                    if state.dead_cards.contains(card) || card == hand[0] || card == hand[1] {
-                        continue;
+                // Turn: use cached bucketing for this board
+                let key = turn_cache_key(&state.board);
+
+                // Try read lock first (fast path)
+                {
+                    let cache = self.turn_bucketing_cache.read().unwrap();
+                    if let Some(bucketing) = cache.get(&key) {
+                        let b = bucketing.get_bucket(hand[0], hand[1]);
+                        return if b < 255 { b as usize } else { 0 };
                     }
-                    let cards = [
-                        hand[0], hand[1],
-                        state.board[0], state.board[1], state.board[2],
-                        state.board[3], card,
-                    ];
-                    total += evaluate_7(&cards) as f64;
-                    count += 1;
                 }
-                if count == 0 { return 0; }
-                let avg = total / count as f64;
-                let max_strength = (9u64 << 20) as f64;
-                ((avg / max_strength) * num_buckets as f64).min(num_buckets as f64 - 1.0) as usize
+
+                // Cache miss: compute bucketing and store
+                let mut board_dead = CardSet::empty();
+                for &c in &state.board {
+                    board_dead.insert(c);
+                }
+                let bucketing = compute_bucketing(&state.board, &board_dead, num_buckets);
+                let b = bucketing.get_bucket(hand[0], hand[1]);
+                let result = if b < 255 { b as usize } else { 0 };
+
+                // Store in cache (write lock)
+                {
+                    let mut cache = self.turn_bucketing_cache.write().unwrap();
+                    cache.insert(key, bucketing);
+                }
+
+                result
             }
             3 => {
                 // Flop: use precomputed bucketing
@@ -1378,5 +1398,49 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn turn_bucketing_cache_works() {
+        use rand::SeedableRng;
+
+        let config = PostflopConfig {
+            flop: [c("Ts"), c("7h"), c("2c")],
+            pot: 100,
+            effective_stack: 200,
+            bet_sizes: BetSizeConfig::default(),
+            oop_range: vec![1.0; 169],
+            ip_range: vec![1.0; 169],
+            num_buckets: 8,
+        };
+
+        let game = PostflopGame::new(config);
+
+        // Create a turn state manually
+        let state = game.initial_state();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+        let (mut state, _) = game.sample_chance_outcome(&state, &mut rng);
+
+        // Check-check flop
+        state = game.apply_action(&state, Action::Check);
+        state = game.apply_action(&state, Action::Check);
+
+        // Deal turn
+        let (state, _) = game.sample_chance_outcome(&state, &mut rng);
+        assert_eq!(state.board.len(), 4);
+
+        let hand = state.oop_hand.unwrap();
+
+        // First call should compute and cache
+        let bucket1 = game.hand_bucket(hand, &state);
+        assert!(bucket1 < 8);
+
+        // Second call should hit cache
+        let bucket2 = game.hand_bucket(hand, &state);
+        assert_eq!(bucket1, bucket2);
+
+        // Verify cache has an entry
+        let cache = game.turn_bucketing_cache.read().unwrap();
+        assert_eq!(cache.len(), 1, "Should have cached one turn board");
     }
 }

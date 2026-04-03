@@ -11,3 +11,4 @@ gto-abstraction = { path = "../gto-abstraction" }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
+rustc-hash = { workspace = true }

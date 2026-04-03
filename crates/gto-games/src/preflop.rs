@@ -1,5 +1,6 @@
 use gto_cfr::Game;
 use gto_core::Action;
+use rayon::prelude::*;
 
 use crate::push_fold::{class_index_to_name, PushFoldData, NUM_CLASSES};
 
@@ -721,6 +722,112 @@ pub fn display_preflop_chart(label: &str, action_name: &str, freqs: &[f64; NUM_C
     display_chart(&title, freqs);
 }
 
+/// Result of solving one matchup.
+#[derive(Clone, Debug)]
+pub struct MatchupResult {
+    pub opener: Position,
+    pub defender: Position,
+    pub config: PreflopConfig,
+    pub strategies: Vec<PreflopStrategySet>,
+    pub exploitability: f64,
+}
+
+/// Solve all 15 preflop matchups in parallel using rayon.
+///
+/// Returns a `MatchupResult` for each (opener, defender) pair.
+/// `push_fold_data` is shared across all matchups (same equity matrix).
+pub fn solve_all_matchups(
+    stack_bb: f64,
+    push_fold_data: &PushFoldData,
+    trainer_config: &gto_cfr::TrainerConfig,
+) -> Vec<MatchupResult> {
+    let matchups = Position::all_matchups();
+
+    matchups
+        .par_iter()
+        .map(|&(opener, defender)| {
+            let config = PreflopConfig::for_matchup(stack_bb, opener, defender);
+            let game = PreflopGame {
+                config: config.clone(),
+                data: PushFoldData::new(
+                    push_fold_data.equity.clone(),
+                    push_fold_data.weights.clone(),
+                ),
+            };
+
+            let solver = gto_cfr::train(&game, trainer_config);
+            let exploitability = solver.exploitability(&game);
+            let strategy = gto_cfr::Strategy::from_solver(&solver);
+            let strategies = extract_preflop_strategies(&strategy, &config);
+
+            MatchupResult {
+                opener,
+                defender,
+                config,
+                strategies,
+                exploitability,
+            }
+        })
+        .collect()
+}
+
+/// Summary of opening frequencies across all positions.
+#[derive(Clone, Debug)]
+pub struct OpeningRangeSummary {
+    pub position: Position,
+    /// Open-raise frequency per hand class (averaged across all defender matchups).
+    pub open_freq: [f64; NUM_CLASSES],
+    /// Number of matchups averaged over.
+    pub num_matchups: usize,
+}
+
+/// Extract opening range summaries from solved matchup results.
+/// For each opener position, averages the open-raise frequency across all its defender matchups.
+pub fn summarize_opening_ranges(results: &[MatchupResult]) -> Vec<OpeningRangeSummary> {
+    let mut summaries = Vec::new();
+
+    for &pos in &Position::ALL {
+        let mut total_freq = [0.0f64; NUM_CLASSES];
+        let mut count = 0usize;
+
+        for result in results {
+            if result.opener != pos {
+                continue;
+            }
+            // Find the opener's first action strategy set (label: "{pos} Action")
+            for strat_set in &result.strategies {
+                if strat_set.label.contains("Action") {
+                    // Find the Open(raise) action
+                    for (ai, name) in strat_set.action_names.iter().enumerate() {
+                        if name.contains("Open") || name.contains("Raise") {
+                            for c in 0..NUM_CLASSES {
+                                total_freq[c] += strat_set.freqs[ai][c];
+                            }
+                            count += 1;
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        if count > 0 {
+            for c in 0..NUM_CLASSES {
+                total_freq[c] /= count as f64;
+            }
+        }
+
+        summaries.push(OpeningRangeSummary {
+            position: pos,
+            open_freq: total_freq,
+            num_matchups: count,
+        });
+    }
+
+    summaries
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1267,5 +1374,61 @@ mod tests {
         let sets = extract_preflop_strategies(&strategy, &config);
         // max_raises=1: should have Opener Action + Defender vs Open = 2 sets
         assert_eq!(sets.len(), 2, "max_raises=1 should produce 2 strategy sets, got {}", sets.len());
+    }
+
+    #[test]
+    fn solve_all_matchups_returns_15_results() {
+        use gto_cfr::TrainerConfig;
+
+        let data = make_test_data();
+        let tc = TrainerConfig {
+            iterations: 50,
+            use_cfr_plus: true,
+            use_chance_sampling: false,
+            print_interval: 0,
+        };
+
+        let results = solve_all_matchups(25.0, &data, &tc);
+        assert_eq!(results.len(), 15, "Should solve all 15 matchups");
+
+        // Verify all position pairs are present
+        let expected = Position::all_matchups();
+        for (i, &(opener, defender)) in expected.iter().enumerate() {
+            assert_eq!(results[i].opener, opener);
+            assert_eq!(results[i].defender, defender);
+        }
+
+        // Each result should have strategies
+        for result in &results {
+            assert!(
+                !result.strategies.is_empty(),
+                "{} vs {} should have strategies",
+                result.opener, result.defender
+            );
+        }
+    }
+
+    #[test]
+    fn summarize_opening_ranges_covers_all_positions() {
+        use gto_cfr::TrainerConfig;
+
+        let data = make_test_data();
+        let tc = TrainerConfig {
+            iterations: 50,
+            use_cfr_plus: true,
+            use_chance_sampling: false,
+            print_interval: 0,
+        };
+
+        let results = solve_all_matchups(25.0, &data, &tc);
+        let summaries = summarize_opening_ranges(&results);
+
+        assert_eq!(summaries.len(), 5, "Should have 5 opener positions");
+
+        // UTG should have 5 matchups, SB should have 1
+        let utg_summary = summaries.iter().find(|s| s.position == Position::UTG).unwrap();
+        let sb_summary = summaries.iter().find(|s| s.position == Position::SB).unwrap();
+        assert_eq!(utg_summary.num_matchups, 5);
+        assert_eq!(sb_summary.num_matchups, 1);
     }
 }
