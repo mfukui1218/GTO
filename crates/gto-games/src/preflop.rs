@@ -158,6 +158,18 @@ impl PreflopGame {
         PreflopGame { config, data }
     }
 
+    /// Whether AllIn should be offered as an action.
+    /// Only when the next raise size is a significant fraction of the stack,
+    /// making AllIn a natural alternative to a sized raise.
+    /// Threshold: raise >= 60% of stack, or stack <= 15bb with no raise available.
+    fn should_offer_allin(&self, next_raise: Option<f64>) -> bool {
+        let stack = self.config.stack_bb;
+        match next_raise {
+            Some(size) => size >= stack * 0.6,
+            None => stack <= 15.0, // short stack only when no raise available
+        }
+    }
+
     /// Get available actions given current state.
     fn get_actions(&self, state: &PreflopState) -> Vec<Action> {
         let stack = self.config.stack_bb;
@@ -173,7 +185,9 @@ impl PreflopGame {
                 if cfg.open_size < stack {
                     actions.push(Action::Raise((cfg.open_size * 10.0) as u32));
                 }
-                actions.push(Action::AllIn);
+                if self.should_offer_allin(Some(cfg.open_size)) {
+                    actions.push(Action::AllIn);
+                }
                 actions
             }
 
@@ -183,10 +197,13 @@ impl PreflopGame {
             // Opener limped → Defender: Check / Raise / AllIn
             [Action::Call] => {
                 let mut actions = vec![Action::Check];
-                if cfg.max_raises >= 2 && cfg.limp_raise_size < stack {
+                let has_raise = cfg.max_raises >= 2 && cfg.limp_raise_size < stack;
+                if has_raise {
                     actions.push(Action::Raise((cfg.limp_raise_size * 10.0) as u32));
                 }
-                actions.push(Action::AllIn);
+                if self.should_offer_allin(if has_raise { Some(cfg.limp_raise_size) } else { None }) {
+                    actions.push(Action::AllIn);
+                }
                 actions
             }
 
@@ -196,10 +213,13 @@ impl PreflopGame {
             // Opener limped, Defender raised → Opener: Fold / Call / Reraise / AllIn
             [Action::Call, Action::Raise(_)] => {
                 let mut actions = vec![Action::Fold, Action::Call];
-                if cfg.max_raises >= 3 && cfg.limp_reraise_size < stack {
+                let has_raise = cfg.max_raises >= 3 && cfg.limp_reraise_size < stack;
+                if has_raise {
                     actions.push(Action::Raise((cfg.limp_reraise_size * 10.0) as u32));
                 }
-                actions.push(Action::AllIn);
+                if self.should_offer_allin(if has_raise { Some(cfg.limp_reraise_size) } else { None }) {
+                    actions.push(Action::AllIn);
+                }
                 actions
             }
 
@@ -209,7 +229,9 @@ impl PreflopGame {
             // Opener limped, Defender raised, Opener reraised → Defender: Fold / Call / AllIn
             [Action::Call, Action::Raise(_), Action::Raise(_)] => {
                 let mut actions = vec![Action::Fold, Action::Call];
-                actions.push(Action::AllIn);
+                if self.should_offer_allin(None) {
+                    actions.push(Action::AllIn);
+                }
                 actions
             }
 
@@ -230,27 +252,36 @@ impl PreflopGame {
             // Opener opened → Defender: Fold / Call / 3bet / AllIn
             [Action::Raise(_)] => {
                 let mut actions = vec![Action::Fold, Action::Call];
-                if cfg.max_raises >= 2 && cfg.three_bet_size < stack {
+                let has_raise = cfg.max_raises >= 2 && cfg.three_bet_size < stack;
+                if has_raise {
                     actions.push(Action::Raise((cfg.three_bet_size * 10.0) as u32));
                 }
-                actions.push(Action::AllIn);
+                if self.should_offer_allin(if has_raise { Some(cfg.three_bet_size) } else { None }) {
+                    actions.push(Action::AllIn);
+                }
                 actions
             }
 
             // Opener opened, Defender 3bet → Opener: Fold / Call / 4bet / AllIn
             [Action::Raise(_), Action::Raise(_)] => {
                 let mut actions = vec![Action::Fold, Action::Call];
-                if cfg.max_raises >= 3 && cfg.four_bet_size < stack {
+                let has_raise = cfg.max_raises >= 3 && cfg.four_bet_size < stack;
+                if has_raise {
                     actions.push(Action::Raise((cfg.four_bet_size * 10.0) as u32));
                 }
-                actions.push(Action::AllIn);
+                if self.should_offer_allin(if has_raise { Some(cfg.four_bet_size) } else { None }) {
+                    actions.push(Action::AllIn);
+                }
                 actions
             }
 
             // Opener opened, Defender 3bet, Opener 4bet → Defender: Fold / Call / AllIn
             [Action::Raise(_), Action::Raise(_), Action::Raise(_)] => {
                 let mut actions = vec![Action::Fold, Action::Call];
-                actions.push(Action::AllIn);
+                // After 4bet, AllIn is the natural next aggression (5bet = AllIn in practice)
+                if self.should_offer_allin(None) {
+                    actions.push(Action::AllIn);
+                }
                 actions
             }
 
@@ -990,7 +1021,20 @@ mod tests {
         let actions = game.actions(dealt);
         assert!(!actions.contains(&Action::Call), "UTG should not have limp: {:?}", actions);
         assert!(actions.contains(&Action::Fold));
-        assert!(actions.contains(&Action::AllIn));
+        // At 100bb, AllIn should NOT be offered alongside a 2.5bb open
+        assert!(!actions.contains(&Action::AllIn), "UTG 100bb should not have AllIn as open: {:?}", actions);
+    }
+
+    #[test]
+    fn short_stack_has_allin() {
+        // At 3bb, open 2.5bb is 83% of stack → AllIn should be offered
+        let game = make_test_game_pos(3.0, Position::BTN);
+        let state = game.initial_state();
+        let outcomes = game.chance_outcomes(&state);
+        let dealt = &outcomes[0].0;
+
+        let actions = game.actions(dealt);
+        assert!(actions.contains(&Action::AllIn), "3bb BTN should have AllIn: {:?}", actions);
     }
 
     #[test]
@@ -1269,7 +1313,7 @@ mod tests {
         // Open
         let opened = game.apply_action(dealt, Action::Raise(25));
         let actions = game.actions(&opened);
-        // Should have Fold, Call, AllIn but no Raise (3bet)
+        // Should have Fold, Call but no Raise (3bet) and no AllIn (100bb deep)
         assert!(
             !actions.iter().any(|a| matches!(a, Action::Raise(_))),
             "max_raises=1 should have no 3bet: {:?}",
@@ -1277,7 +1321,7 @@ mod tests {
         );
         assert!(actions.contains(&Action::Fold));
         assert!(actions.contains(&Action::Call));
-        assert!(actions.contains(&Action::AllIn));
+        assert!(!actions.contains(&Action::AllIn), "100bb should not have AllIn vs open: {:?}", actions);
     }
 
     #[test]
