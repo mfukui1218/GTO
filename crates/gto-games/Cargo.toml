@@ -1,0 +1,13 @@
+[package]
+name = "gto-games"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gto-core = { path = "../gto-core" }
+gto-eval = { path = "../gto-eval" }
+gto-cfr = { path = "../gto-cfr" }
+gto-abstraction = { path = "../gto-abstraction" }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+rayon = { workspace = true }

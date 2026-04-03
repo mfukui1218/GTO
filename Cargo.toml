@@ -1,0 +1,40 @@
+[workspace]
+members = [
+    "crates/gto-core",
+    "crates/gto-eval",
+    "crates/gto-abstraction",
+    "crates/gto-cfr",
+    "crates/gto-games",
+]
+resolver = "2"
+
+[package]
+name = "gto-solver"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "gto-solver"
+path = "src/main.rs"
+
+[dependencies]
+gto-core = { path = "crates/gto-core" }
+gto-eval = { path = "crates/gto-eval" }
+gto-cfr = { path = "crates/gto-cfr" }
+gto-games = { path = "crates/gto-games" }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors"] }
+uuid = { version = "1.10", features = ["v4"] }
+
+[workspace.dependencies]
+rand = "0.8"
+rand_chacha = "0.3"
+rayon = "1.10"
+rustc-hash = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

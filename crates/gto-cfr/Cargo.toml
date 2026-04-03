@@ -1,0 +1,12 @@
+[package]
+name = "gto-cfr"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gto-core = { path = "../gto-core" }
+rand = { workspace = true }
+rayon = { workspace = true }
+rustc-hash = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

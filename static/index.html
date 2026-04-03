@@ -1,0 +1,3178 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GTO Poker Solver</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', Roboto, monospace; background: #0d1117; color: #c9d1d9; min-height: 100vh; }
+.header { background: #161b22; border-bottom: 1px solid #30363d; padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
+.header h1 { font-size: 20px; color: #58a6ff; }
+.header .subtitle { font-size: 13px; color: #8b949e; }
+.lang-switch { margin-left: auto; display: flex; gap: 4px; }
+.lang-btn { background: #21262d; color: #8b949e; border: 1px solid #30363d; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.lang-btn:hover { color: #c9d1d9; }
+.lang-btn.active { background: #30363d; color: #58a6ff; border-color: #58a6ff; }
+.tabs { display: flex; background: #161b22; border-bottom: 1px solid #30363d; padding: 0 24px; overflow-x: auto; }
+.tab { padding: 12px 20px; cursor: pointer; color: #8b949e; border-bottom: 2px solid transparent; font-size: 14px; transition: all 0.2s; white-space: nowrap; }
+.tab:hover { color: #c9d1d9; }
+.tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+.content { max-width: 1400px; margin: 0 auto; padding: 24px; }
+.panel { display: none; }
+.panel.active { display: block; }
+.controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 20px; }
+.controls label { font-size: 13px; color: #8b949e; }
+.controls input[type="number"], .controls input[type="text"] {
+  background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px;
+  border-radius: 6px; font-size: 14px; width: 120px;
+}
+.controls input:focus { outline: none; border-color: #58a6ff; }
+.controls select { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 6px; font-size: 14px; }
+.btn { background: #238636; color: #fff; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; }
+.btn:hover { background: #2ea043; }
+.btn:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
+.btn-sm { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.btn-sm:hover { background: #30363d; }
+.btn-preset { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.btn-preset:hover { background: #30363d; }
+.chk { display: flex; align-items: center; gap: 6px; }
+.chk input[type="checkbox"] { accent-color: #58a6ff; }
+.result-meta { display: flex; gap: 20px; margin-bottom: 16px; flex-wrap: wrap; }
+.meta-item { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 16px; }
+.meta-item .label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+.meta-item .value { font-size: 20px; font-weight: 600; color: #58a6ff; margin-top: 4px; }
+table.strat { border-collapse: collapse; margin-bottom: 16px; width: 100%; max-width: 600px; }
+table.strat th { text-align: left; padding: 8px 12px; color: #8b949e; font-size: 12px; font-weight: 500; border-bottom: 1px solid #30363d; }
+table.strat td { padding: 8px 12px; border-bottom: 1px solid #21262d; font-size: 14px; }
+table.strat .key { color: #f0883e; font-weight: 500; }
+.prob-bar { display: inline-block; height: 8px; border-radius: 4px; margin-right: 8px; vertical-align: middle; }
+.section-title { font-size: 16px; font-weight: 600; color: #e6edf3; margin: 20px 0 12px; border-bottom: 1px solid #21262d; padding-bottom: 8px; }
+.spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #30363d; border-top-color: #58a6ff; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.progress { color: #8b949e; font-size: 14px; margin: 12px 0; }
+.progress-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px 20px; margin: 12px 0; max-width: 500px; }
+.progress-card .progress-label { font-size: 13px; color: #c9d1d9; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.progress-card .progress-bar-track { width: 100%; height: 8px; background: #21262d; border-radius: 4px; overflow: hidden; margin-bottom: 8px; }
+.progress-card .progress-bar-fill { height: 100%; background: linear-gradient(90deg, #1f6feb, #58a6ff); border-radius: 4px; transition: width 0.4s ease; }
+.progress-card .progress-bar-fill.indeterminate { width: 30% !important; animation: indeterminate 1.5s ease-in-out infinite; }
+@keyframes indeterminate { 0% { transform: translateX(-100%); } 100% { transform: translateX(400%); } }
+.progress-card .progress-meta { display: flex; justify-content: space-between; font-size: 12px; color: #8b949e; }
+.progress-card .progress-pct { font-size: 20px; font-weight: 700; color: #58a6ff; }
+.pf-section { margin-bottom: 32px; }
+.pf-title { font-size: 15px; font-weight: 600; color: #e6edf3; margin-bottom: 8px; }
+.pf-stats { font-size: 13px; color: #8b949e; margin-bottom: 12px; }
+.grid-container { overflow-x: auto; }
+table.pf-grid { border-collapse: collapse; font-size: 12px; }
+table.pf-grid th { padding: 4px 6px; color: #8b949e; font-weight: 500; text-align: center; min-width: 42px; }
+table.pf-grid td { padding: 1px 2px; text-align: center; border: 1px solid #21262d; min-width: 42px; height: 38px; cursor: default; position: relative; font-size: 11px; font-weight: 500; vertical-align: middle; }
+table.pf-grid td .hand-name { display: block; font-size: 10px; font-weight: 600; line-height: 1.2; margin-bottom: 1px; }
+table.pf-grid td .cell-freq { display: block; font-size: 10px; opacity: 0.8; }
+/* Overview grid: multi-action stacked bar */
+table.pf-grid.overview-grid td .cell-name { display: block; font-size: 10px; font-weight: 600; line-height: 1.2; margin-bottom: 1px; }
+.cell-bar { display: flex; height: 6px; width: 100%; border-radius: 2px; overflow: hidden; margin-top: 1px; }
+.cell-bar > div { height: 100%; }
+/* Action legend */
+.action-legend { display: flex; gap: 12px; flex-wrap: wrap; margin: 8px 0 12px; font-size: 12px; align-items: center; }
+.action-legend .legend-item { display: flex; align-items: center; gap: 4px; }
+.action-legend .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+.eq-bar-container { width: 100%; max-width: 400px; height: 24px; background: #da3633; border-radius: 4px; overflow: hidden; display: flex; margin: 8px 0; }
+.eq-bar-win { background: #238636; height: 100%; }
+.eq-bar-tie { background: #d29922; height: 100%; }
+.card-inputs { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.card-inputs input { width: 60px; text-align: center; font-size: 16px; font-weight: 600; text-transform: uppercase; }
+.vs-label { font-size: 16px; font-weight: 600; color: #8b949e; padding: 0 8px; }
+.presets { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.eq-result { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; max-width: 500px; }
+.eq-result .matchup { font-size: 24px; font-weight: 700; color: #e6edf3; margin-bottom: 12px; }
+.eq-result .equity-big { font-size: 36px; font-weight: 700; color: #58a6ff; }
+.eq-stats { display: flex; gap: 20px; margin-top: 12px; }
+.eq-stats .stat { text-align: center; }
+.eq-stats .stat .val { font-size: 18px; font-weight: 600; }
+.eq-stats .stat .lbl { font-size: 11px; color: #8b949e; }
+.eq-stats .win .val { color: #3fb950; }
+.eq-stats .tie .val { color: #d29922; }
+.eq-stats .lose .val { color: #da3633; }
+.error { color: #f85149; background: #21262d; border: 1px solid #f8514933; padding: 12px; border-radius: 6px; margin: 12px 0; }
+.desc { color: #8b949e; font-size: 13px; line-height: 1.7; margin-bottom: 20px; padding: 14px 16px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; }
+.desc ul { margin: 6px 0 0 18px; }
+.desc li { margin-bottom: 2px; }
+.desc code { background: #21262d; padding: 1px 5px; border-radius: 3px; font-size: 12px; color: #e6edf3; }
+/* Range grid (interactive) */
+table.range-grid { border-collapse: collapse; font-size: 11px; user-select: none; }
+table.range-grid th { padding: 3px 4px; color: #8b949e; font-weight: 500; text-align: center; min-width: 36px; font-size: 11px; }
+table.range-grid td { padding: 2px 3px; text-align: center; border: 1px solid #21262d; min-width: 36px; height: 30px; cursor: pointer; font-size: 10px; font-weight: 600; transition: background 0.1s; }
+table.range-grid td:hover { outline: 2px solid #58a6ff; outline-offset: -2px; }
+table.range-grid td.selected { background: rgba(35,134,54,0.8) !important; color: #fff; }
+.range-side { display: flex; gap: 32px; flex-wrap: wrap; }
+.range-panel { flex: 1; min-width: 400px; }
+.range-panel h3 { font-size: 15px; font-weight: 600; color: #e6edf3; margin-bottom: 8px; }
+.range-toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+.range-toolbar select { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+.range-info { font-size: 12px; color: #8b949e; margin-top: 4px; }
+/* Postflop */
+.review-inputs { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; align-items: center; max-width: 500px; margin-bottom: 16px; }
+.review-inputs label { font-size: 13px; color: #8b949e; text-align: right; }
+.review-inputs input, .review-inputs select { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 6px; font-size: 14px; }
+.review-result { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; max-width: 700px; }
+.review-result .hero-info { font-size: 20px; font-weight: 700; color: #e6edf3; margin-bottom: 8px; }
+.review-result .equity-big { font-size: 36px; font-weight: 700; color: #58a6ff; margin-bottom: 8px; }
+.ev-table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+.ev-table th { text-align: left; padding: 8px; color: #8b949e; font-size: 12px; border-bottom: 1px solid #30363d; }
+.ev-table td { padding: 8px; border-bottom: 1px solid #21262d; font-size: 14px; }
+.ev-table .positive { color: #3fb950; font-weight: 600; }
+.ev-table .negative { color: #da3633; font-weight: 600; }
+.ev-table .zero { color: #8b949e; }
+.badge { display: inline-block; padding: 4px 14px; border-radius: 12px; font-size: 14px; font-weight: 700; text-transform: uppercase; }
+.badge-call { background: #238636; color: #fff; }
+.badge-fold { background: #8b949e; color: #fff; }
+.badge-bet, .badge-raise { background: #1f6feb; color: #fff; }
+.badge-check { background: #484f58; color: #fff; }
+.board-tex { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.board-tex .tag { background: #21262d; border: 1px solid #30363d; padding: 2px 8px; border-radius: 4px; font-size: 11px; color: #c9d1d9; }
+/* Save range modal */
+.save-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.save-row input { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 4px 8px; border-radius: 4px; font-size: 12px; width: 140px; }
+.saved-list { margin-top: 8px; display: flex; gap: 4px; flex-wrap: wrap; }
+.saved-list .saved-item { background: #21262d; border: 1px solid #30363d; padding: 3px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px; }
+.saved-list .saved-item:hover { border-color: #58a6ff; }
+.saved-list .del-btn { color: #f85149; cursor: pointer; font-size: 13px; }
+/* Active action button styling */
+.pfg-act-btn.active-action { font-weight: 700; }
+/* Sub-tabs within combined panels */
+.sub-tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid #30363d; padding-bottom: 0; }
+.sub-tab { padding: 8px 16px; cursor: pointer; color: #8b949e; border-bottom: 2px solid transparent; font-size: 13px; transition: all 0.2s; margin-bottom: -1px; }
+.sub-tab:hover { color: #c9d1d9; }
+.sub-tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+.sub-panel { display: none; }
+.sub-panel.active { display: block; }
+/* Hand Flow stepper */
+.hf-stepper { display: flex; align-items: center; gap: 0; margin-bottom: 24px; padding: 16px 0; }
+.hf-step { display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: default; min-width: 80px; }
+.hf-step.clickable { cursor: pointer; }
+.hf-step.clickable:hover .hf-step-num { transform: scale(1.1); }
+.hf-step-num { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; background: #21262d; color: #484f58; border: 2px solid #30363d; transition: all 0.3s; }
+.hf-step.active .hf-step-num { background: #1f6feb; color: #fff; border-color: #1f6feb; }
+.hf-step.completed .hf-step-num { background: #238636; color: #fff; border-color: #238636; }
+.hf-step-label { font-size: 12px; color: #484f58; transition: color 0.3s; }
+.hf-step.active .hf-step-label { color: #58a6ff; font-weight: 600; }
+.hf-step.completed .hf-step-label { color: #3fb950; }
+.hf-step-line { flex: 1; height: 2px; background: #30363d; margin: 0 8px; margin-bottom: 20px; transition: background 0.3s; }
+.hf-step-line.completed { background: #238636; }
+.hf-phase { animation: fadeIn 0.3s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+/* Action line selector */
+.hf-action-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 16px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; }
+.hf-action-line select { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 6px; font-size: 14px; }
+.hf-action-line .hf-al-arrow { color: #30363d; font-size: 18px; }
+.hf-action-line .hf-al-label { font-size: 13px; color: #8b949e; font-weight: 500; }
+.hf-action-line .hf-al-terminal { font-size: 14px; color: #d29922; font-weight: 600; padding: 4px 12px; background: rgba(210,153,34,0.1); border-radius: 6px; }
+/* Derived ranges mini display */
+.hf-derived { display: flex; gap: 24px; flex-wrap: wrap; }
+.hf-derived-panel { flex: 1; min-width: 280px; }
+.hf-derived-panel h4 { font-size: 14px; color: #e6edf3; margin-bottom: 4px; }
+.hf-derived-panel .hf-range-stats { font-size: 12px; color: #8b949e; margin-bottom: 8px; }
+.hf-context-bar { display: flex; gap: 16px; flex-wrap: wrap; padding: 12px 16px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; font-size: 13px; color: #8b949e; margin-bottom: 16px; }
+.hf-context-bar span { color: #c9d1d9; font-weight: 500; }
+/* Card picker */
+.card-picker { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; max-width: 620px; }
+.card-picker-selected { display: flex; gap: 8px; margin-bottom: 12px; min-height: 56px; align-items: center; }
+.card-picker-slot { width: 44px; height: 56px; border: 2px dashed #30363d; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #484f58; transition: all 0.2s; }
+.card-picker-slot.filled { border-style: solid; border-color: #58a6ff; background: #0d1117; }
+.card-picker-slot .cp-card { font-size: 18px; font-weight: 700; line-height: 1; text-align: center; }
+.card-picker-slot .cp-card .cp-rank { display: block; font-size: 16px; }
+.card-picker-slot .cp-card .cp-suit { display: block; font-size: 16px; line-height: 1; }
+.card-picker-slot.filled { cursor: pointer; }
+.card-picker-slot.filled:hover { border-color: #f85149; }
+.card-picker-grid { display: grid; grid-template-columns: repeat(13, 1fr); gap: 3px; }
+.card-picker-grid .cp-btn { width: 100%; aspect-ratio: 0.72; border: 1px solid #30363d; border-radius: 4px; background: #0d1117; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; line-height: 1.1; transition: all 0.15s; padding: 1px; }
+.card-picker-grid .cp-btn:hover:not(.cp-disabled):not(.cp-selected) { border-color: #58a6ff; background: #161b22; transform: scale(1.08); z-index: 1; }
+.card-picker-grid .cp-btn.cp-selected { border-color: #58a6ff; background: #1f6feb; color: #fff; box-shadow: 0 0 8px rgba(31,111,235,0.4); }
+.card-picker-grid .cp-btn.cp-disabled { opacity: 0.2; cursor: not-allowed; }
+.cp-suit-s { color: #8b949e; }
+.cp-suit-h { color: #f85149; }
+.cp-suit-d { color: #58a6ff; }
+.cp-suit-c { color: #3fb950; }
+.card-picker-suit-row { margin-bottom: 4px; }
+.card-picker-suit-label { font-size: 18px; width: 24px; text-align: center; display: inline-block; }
+.cp-clear-btn { margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1 id="h-title">GTO Poker Solver</h1>
+  <span class="subtitle" id="h-subtitle">CFR-based Nash Equilibrium Solver</span>
+  <div class="lang-switch">
+    <button class="lang-btn" data-lang="en" onclick="setLang('en')">EN</button>
+    <button class="lang-btn active" data-lang="ja" onclick="setLang('ja')">JA</button>
+  </div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="solver" id="tab-solver">Solver</div>
+  <div class="tab" data-tab="equity" id="tab-equity">Equity Calculator</div>
+  <div class="tab" data-tab="range-editor" id="tab-range-editor">Range Editor</div>
+  <div class="tab" data-tab="range-equity" id="tab-range-equity">Range vs Range</div>
+</div>
+
+<div class="content">
+
+  <!-- Solver (Preflop + Postflop combined) -->
+  <div id="solver" class="panel active">
+    <div class="sub-tabs">
+      <div class="sub-tab active" data-subtab="sub-hand-flow" onclick="switchSubTab('solver','sub-hand-flow')" id="subtab-hand-flow">Hand Flow</div>
+      <div class="sub-tab" data-subtab="sub-pushfold" onclick="switchSubTab('solver','sub-pushfold')" id="subtab-pushfold">Push/Fold</div>
+      <div class="sub-tab" data-subtab="sub-postflop-review" onclick="switchSubTab('solver','sub-postflop-review')" id="subtab-postflop-review">Postflop Review</div>
+    </div>
+    <div id="sub-hand-flow" class="sub-panel active">
+    <!-- Stepper bar -->
+    <div class="hf-stepper">
+      <div class="hf-step active" data-phase="1" id="hf-step-1">
+        <div class="hf-step-num">1</div>
+        <div class="hf-step-label" id="hf-step-label-1">Setup</div>
+      </div>
+      <div class="hf-step-line" id="hf-line-1"></div>
+      <div class="hf-step" data-phase="2" id="hf-step-2">
+        <div class="hf-step-num">2</div>
+        <div class="hf-step-label" id="hf-step-label-2">Preflop</div>
+      </div>
+      <div class="hf-step-line" id="hf-line-2"></div>
+      <div class="hf-step" data-phase="3" id="hf-step-3">
+        <div class="hf-step-num">3</div>
+        <div class="hf-step-label" id="hf-step-label-3">Flop</div>
+      </div>
+      <div class="hf-step-line" id="hf-line-3"></div>
+      <div class="hf-step" data-phase="4" id="hf-step-4">
+        <div class="hf-step-num">4</div>
+        <div class="hf-step-label" id="hf-step-label-4">Results</div>
+      </div>
+    </div>
+
+    <!-- Phase 1: Setup -->
+    <div id="hf-phase-1" class="hf-phase">
+      <div class="desc" id="desc-hand-flow"></div>
+      <div class="controls" style="margin-top:16px;">
+        <label id="lbl-hf-opener">Opener:</label>
+        <select id="hf-opener" onchange="hfOnOpenerChange()">
+          <option value="UTG">UTG</option>
+          <option value="HJ">HJ</option>
+          <option value="CO" selected>CO</option>
+          <option value="BTN">BTN</option>
+          <option value="SB">SB</option>
+        </select>
+        <label id="lbl-hf-defender">Defender:</label>
+        <select id="hf-defender"></select>
+        <label id="lbl-hf-stack">Stack:</label>
+        <select id="hf-stack">
+          <option value="25">25bb</option>
+          <option value="50">50bb</option>
+          <option value="100" selected>100bb</option>
+        </select>
+        <label id="lbl-hf-mode">Mode:</label>
+        <select id="hf-mode">
+          <option value="1" selected id="hf-mode-open">Open</option>
+          <option value="2" id="hf-mode-3bet">3bet</option>
+          <option value="3" id="hf-mode-full">Full (4bet)</option>
+        </select>
+        <label id="lbl-hf-iter">Iterations:</label>
+        <input type="number" id="hf-iter" value="50000" min="5000" step="5000">
+        <button class="btn" id="hf-solve-preflop" onclick="hfSolvePreflop()">Solve Preflop</button>
+      </div>
+      <div id="hf-setup-progress"></div>
+    </div>
+
+    <!-- Phase 2: Preflop -->
+    <div id="hf-phase-2" class="hf-phase" style="display:none;">
+      <div id="hf-preflop-gto-result"></div>
+      <div class="section-title" id="lbl-hf-action-line">Action Line</div>
+      <div id="hf-action-line" class="hf-action-line"></div>
+      <div id="hf-derived-ranges" style="margin-top:16px;"></div>
+      <div style="margin-top:16px;">
+        <button class="btn" id="hf-deal-flop" onclick="hfProceedToFlop()" disabled>Deal Flop →</button>
+      </div>
+    </div>
+
+    <!-- Phase 3: Flop -->
+    <div id="hf-phase-3" class="hf-phase" style="display:none;">
+      <div id="hf-flop-context" class="hf-context-bar"></div>
+      <label id="lbl-hf-board" style="font-size:13px;color:#8b949e;display:block;margin-bottom:8px;">Board:</label>
+      <div id="hf-card-picker" class="card-picker"></div>
+      <input type="hidden" id="hf-board" value="">
+      <div id="hf-flop-ranges" style="margin:16px 0;"></div>
+      <div style="display:flex;gap:16px;max-width:600px;margin-bottom:16px;">
+        <div style="flex:1;">
+          <label id="lbl-hf-oop-bet" style="font-size:13px;color:#8b949e;">OOP Bet Sizes (% pot):</label>
+          <select id="hf-oop-bet-preset" onchange="hfOnBetPreset('oop')" style="width:100%;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:6px 8px;border-radius:4px;font-size:13px;margin-top:4px;">
+            <option value="33" selected>33% only</option>
+            <option value="33,75">33%, 75%</option>
+            <option value="25,50,100">25%, 50%, 100%</option>
+            <option value="50,100">50%, 100%</option>
+            <option value="custom">Custom...</option>
+          </select>
+          <input type="text" id="hf-oop-bet" value="33" placeholder="e.g. 33,75,150" style="display:none;width:100%;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:6px;font-size:12px;margin-top:4px;">
+        </div>
+        <div style="flex:1;">
+          <label id="lbl-hf-ip-bet" style="font-size:13px;color:#8b949e;">IP Bet Sizes (% pot):</label>
+          <select id="hf-ip-bet-preset" onchange="hfOnBetPreset('ip')" style="width:100%;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:6px 8px;border-radius:4px;font-size:13px;margin-top:4px;">
+            <option value="33" selected>33% only</option>
+            <option value="33,75">33%, 75%</option>
+            <option value="25,50,100">25%, 50%, 100%</option>
+            <option value="50,100">50%, 100%</option>
+            <option value="custom">Custom...</option>
+          </select>
+          <input type="text" id="hf-ip-bet" value="33" placeholder="e.g. 33,75,150" style="display:none;width:100%;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:6px;font-size:12px;margin-top:4px;">
+        </div>
+      </div>
+      <details style="margin-bottom:16px;">
+        <summary style="cursor:pointer;color:#8b949e;font-size:13px;" id="lbl-hf-advanced">Advanced Settings</summary>
+        <div style="display:flex;gap:16px;margin-top:8px;flex-wrap:wrap;">
+          <div>
+            <label id="lbl-hf-max-raises" style="font-size:12px;color:#8b949e;">Max Raises:</label>
+            <input type="number" id="hf-max-raises" value="2" min="1" max="4" style="width:60px;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:4px;font-size:12px;">
+          </div>
+          <div>
+            <label id="lbl-hf-pfs-iter" style="font-size:12px;color:#8b949e;">Iterations:</label>
+            <input type="number" id="hf-pfs-iter" value="2000" min="100" max="50000" step="500" style="width:80px;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:4px;font-size:12px;">
+          </div>
+        </div>
+      </details>
+      <button class="btn" id="hf-solve-postflop" onclick="hfSolvePostflop()">Solve Postflop</button>
+      <div id="hf-flop-progress" style="margin-top:12px;"></div>
+    </div>
+
+    <!-- Phase 4: Results -->
+    <div id="hf-phase-4" class="hf-phase" style="display:none;">
+      <div id="hf-result-context" class="hf-context-bar"></div>
+      <div id="hf-result"></div>
+    </div>
+    </div><!-- /sub-hand-flow -->
+
+    <div id="sub-pushfold" class="sub-panel">
+    <div class="desc" id="desc-pushfold"></div>
+    <div class="controls">
+      <label id="lbl-pf-stacks">Stacks (bb):</label>
+      <input type="text" id="pf-stacks" value="5,10,15,20" style="width:160px;">
+      <label id="lbl-pf-samples">MC Samples:</label>
+      <input type="number" id="pf-samples" value="2000000" min="100000" step="500000">
+      <label id="lbl-pf-iter">Iterations:</label>
+      <input type="number" id="pf-iter" value="10000" min="1000" step="1000">
+      <button class="btn" id="pf-solve" onclick="solvePushFold()">Solve</button>
+    </div>
+    <div id="pf-progress"></div>
+    <div id="pf-result"></div>
+    </div><!-- /sub-pushfold -->
+
+    <div id="sub-postflop-review" class="sub-panel">
+    <div class="desc" id="desc-postflop"></div>
+    <div class="review-inputs">
+      <label id="lbl-pf-hero">Hero Hand:</label>
+      <div class="card-inputs">
+        <input type="text" id="pf-hero-a" placeholder="Ah" maxlength="2" style="width:50px;">
+        <input type="text" id="pf-hero-b" placeholder="Kd" maxlength="2" style="width:50px;">
+      </div>
+      <label id="lbl-pf-board">Board:</label>
+      <input type="text" id="pf-board" placeholder="e.g. Ts 7h 2c" style="width:200px;">
+      <label id="lbl-pf-pot">Pot:</label>
+      <input type="number" id="pf-pot" value="100" min="0" style="width:100px;">
+      <label id="lbl-pf-stack">Eff. Stack:</label>
+      <input type="number" id="pf-eff-stack" value="500" min="0" style="width:100px;">
+      <label id="lbl-pf-vbet">Villain Bet:</label>
+      <input type="number" id="pf-vbet" value="60" min="0" style="width:100px;">
+      <label id="lbl-pf-vrange">Villain Range:</label>
+      <select id="pf-vrange-preset" onchange="loadPresetToPostflop()"><option value="">-- Preset --</option></select>
+    </div>
+    <div id="pf-mini-grid-container" style="margin-bottom:12px;"></div>
+    <button class="btn" id="pf-analyze" onclick="analyzePostflop()">Analyze</button>
+    <div id="pf-review-result" style="margin-top:16px;"></div>
+    </div><!-- /sub-postflop-review -->
+
+  </div><!-- /solver -->
+
+  <!-- Equity Calculator -->
+  <div id="equity" class="panel">
+    <div class="desc" id="desc-equity"></div>
+    <div class="presets">
+      <button class="btn-preset" onclick="setEquity('As','Ah','Ks','Kh')">AA vs KK</button>
+      <button class="btn-preset" onclick="setEquity('As','Ks','Qh','Qd')">AKs vs QQ</button>
+      <button class="btn-preset" onclick="setEquity('As','Ah','7d','2c')">AA vs 72o</button>
+      <button class="btn-preset" onclick="setEquity('Jc','Tc','9h','9d')">JTs vs 99</button>
+      <button class="btn-preset" onclick="setEquity('As','Qh','Kd','Jd')">AQo vs KJs</button>
+      <button class="btn-preset" onclick="setEquity('Kh','Ks','Ah','Kd')">KK vs AKo</button>
+    </div>
+    <div class="controls">
+      <div class="card-inputs">
+        <input type="text" id="eq-h1a" placeholder="As" maxlength="2">
+        <input type="text" id="eq-h1b" placeholder="Ah" maxlength="2">
+        <span class="vs-label">vs</span>
+        <input type="text" id="eq-h2a" placeholder="Ks" maxlength="2">
+        <input type="text" id="eq-h2b" placeholder="Kh" maxlength="2">
+      </div>
+      <label id="lbl-board">Board:</label>
+      <input type="text" id="eq-board" placeholder="e.g. Td 7h 2s" style="width:200px;">
+      <button class="btn" id="eq-calc" onclick="calcEquity()">Calculate</button>
+    </div>
+    <div id="equity-result"></div>
+  </div>
+
+  <!-- Range Editor -->
+  <div id="range-editor" class="panel">
+    <div class="desc" id="desc-range-editor"></div>
+    <div class="range-toolbar">
+      <select id="re-preset" onchange="loadPresetToEditor()"><option value="">-- Preset --</option></select>
+      <button class="btn-sm" onclick="clearEditorRange()"  id="re-clear-btn">Clear</button>
+      <button class="btn-sm" onclick="selectAllEditorRange()" id="re-all-btn">Select All</button>
+    </div>
+    <div id="re-grid-container"></div>
+    <div class="range-info" id="re-info"></div>
+    <div class="save-row">
+      <input type="text" id="re-save-name" placeholder="Range name">
+      <button class="btn-sm" onclick="saveEditorRange()" id="re-save-btn">Save</button>
+    </div>
+    <div class="saved-list" id="re-saved-list"></div>
+  </div>
+
+  <!-- Range vs Range -->
+  <div id="range-equity" class="panel">
+    <div class="desc" id="desc-range-equity"></div>
+    <div class="controls">
+      <label id="lbl-rr-board">Board:</label>
+      <input type="text" id="rr-board" placeholder="e.g. Td 7h 2s" style="width:200px;">
+      <button class="btn" id="rr-calc" onclick="calcRangeEquity()">Calculate</button>
+    </div>
+    <div class="range-side">
+      <div class="range-panel">
+        <h3 id="rr-hero-label">Hero Range</h3>
+        <div class="range-toolbar">
+          <select id="rr-hero-preset" onchange="loadPresetToRR('hero')"><option value="">-- Preset --</option></select>
+          <button class="btn-sm" onclick="rrGrids.hero.clear(); updateRRInfo('hero')">Clear</button>
+          <button class="btn-sm" onclick="rrGrids.hero.selectAll(); updateRRInfo('hero')">All</button>
+        </div>
+        <div id="rr-hero-grid"></div>
+        <div class="range-info" id="rr-hero-info"></div>
+      </div>
+      <div class="range-panel">
+        <h3 id="rr-villain-label">Villain Range</h3>
+        <div class="range-toolbar">
+          <select id="rr-villain-preset" onchange="loadPresetToRR('villain')"><option value="">-- Preset --</option></select>
+          <button class="btn-sm" onclick="rrGrids.villain.clear(); updateRRInfo('villain')">Clear</button>
+          <button class="btn-sm" onclick="rrGrids.villain.selectAll(); updateRRInfo('villain')">All</button>
+        </div>
+        <div id="rr-villain-grid"></div>
+        <div class="range-info" id="rr-villain-info"></div>
+      </div>
+    </div>
+    <div id="rr-progress"></div>
+    <div id="rr-result"></div>
+  </div>
+
+
+</div>
+
+<script>
+// ============================================================
+// i18n
+// ============================================================
+let lang = localStorage.getItem('gto-lang') || 'ja';
+
+const i18n = {
+  en: {
+    title: 'GTO Poker Solver',
+    subtitle: 'CFR-based Nash Equilibrium Solver',
+    tabEquity: 'Equity Calculator', tabPushfold: 'Push/Fold',
+    tabRangeEditor: 'Range Editor', tabRangeEquity: 'Range vs Range',
+    tabSolver: 'Solver',
+    subtabHandFlow: 'Hand Flow',
+    subtabPushFold: 'Push/Fold',
+    subtabPostflopReview: 'Postflop Review',
+    iterations: 'Iterations:', solve: 'Solve', solving: 'Solving...',
+    board: 'Board:', calculate: 'Calculate', calculating: 'Calculating...',
+    stacks: 'Stacks (bb):', mcSamples: 'MC Samples:',
+    boardPlaceholder: 'e.g. Td 7h 2s',
+    infoSets: 'Info Sets', exploitability: 'Exploitability',
+    Fold: 'Fold', Check: 'Check', Call: 'Call', Bet: 'Bet', Raise: 'Raise',
+    Open: 'Open', Limp: 'Limp', ThreeBet: '3-Bet', FourBet: '4-Bet', AllIn: 'All-In',
+    Overview: 'Overview',
+    win: 'Win', tie: 'Tie', lose: 'Lose', totalBoards: 'Total boards evaluated:',
+    sbPush: 'SB Push Range', bbCall: 'BB Call Range',
+    range: 'Range:', combos: 'combos',
+    starting: 'Starting...', computingMatrix: 'Computing equity matrix...',
+    solvingStack: (s, p) => `Solving stack ${s} (${p})...`,
+    calcEquity: 'Calculating equity...', unknownError: 'Unknown error',
+    solvingMatchup: (o, d, s, p) => `Solving ${o} vs ${d} ${s} (${p})...`,
+    solvingMatchupIter: (o, d, s, p, i, t) => `${o} vs ${d} ${s} (${p}) — iteration ${Number(i).toLocaleString()}/${Number(t).toLocaleString()}`,
+    solvingStackIter: (s, p, i, t) => `Stack ${s} (${p}) — iteration ${Number(i).toLocaleString()}/${Number(t).toLocaleString()}`,
+    heroRange: 'Hero Range', villainRange: 'Villain Range',
+    clear: 'Clear', selectAll: 'Select All', save: 'Save',
+    analyze: 'Analyze', analyzing: 'Analyzing...',
+    heroHand: 'Hero Hand:', pot: 'Pot:', effStack: 'Eff. Stack:', villainBet: 'Villain Bet:',
+    villainRangeLabel: 'Villain Range:',
+    equity: 'Equity', potOdds: 'Pot Odds', action: 'Action', ev: 'EV',
+    notes: 'Notes', evCall: 'EV (Call)', evFold: 'EV (Fold)',
+    recommendation: 'Recommendation', handCategory: 'Hand', outs: 'Outs',
+    boardTexture: 'Board Texture', paired: 'Paired', twoTone: 'Two-Tone',
+    monotone: 'Monotone', straightDraw: 'Straight Possible',
+    highCard: 'High Card',
+    evIfCalled: 'EV if called', foldEqNeeded: 'Fold equity needed',
+    heroEquity: 'Hero Equity', matchups: 'Matchups', classEquity: 'Per-Hand Equity',
+    rangeVsRange: 'Range vs Range', preflopMC: 'Preflop (Monte Carlo)...',
+    savedRanges: 'Saved Ranges',
+    stack: 'Stack (bb):', position: 'Position:', allPositions: 'All',
+    defender: 'Defender:', allDefenders: 'All defenders',
+    mode: 'Mode:', modeOpen: 'Open', mode3bet: '3bet', modeFull: 'Full (4bet)',
+    solvingPreflop: 'Solving preflop GTO...',
+    descPreflopGTO: `Compute <b>GTO preflop strategies</b> for 6-max with full action trees: Open/3bet/4bet/AllIn. SB vs BB also has Limp. Uses CFR to solve all 169 hand classes simultaneously.
+<ul><li><b>Position</b>: Select a specific opener position or "All"</li><li><b>Defender</b>: Select which defender to solve against (default: BB). "All defenders" solves every valid matchup</li><li><b>Stack</b>: Effective stack size in big blinds</li><li><b>Overview</b>: Default view shows all actions at once with stacked color bars per hand</li><li>Click individual action buttons to see frequency grids for specific actions</li></ul>`,
+    descRangeEditor: `Build and save custom hand ranges using the interactive 13&times;13 grid. Click cells to toggle hands on/off. Drag to select multiple cells. Load position-based presets or create your own.
+<ul><li><b>Grid layout</b>: Diagonal = pairs, upper-right = suited, lower-left = offsuit</li><li><b>Presets</b>: Standard opening ranges for each position (UTG through BB)</li><li><b>Save/Load</b>: Save ranges to browser storage for reuse in other tools</li></ul>`,
+    descRangeEquity: `Calculate equity between two hand ranges on a given board. Select hand ranges for both Hero and Villain, specify board cards, and see overall equity plus per-hand equity breakdown.
+<ul><li><b>Board</b>: Enter 3 (flop), 4 (turn), or 5 (river) cards. Leave empty for preflop (Monte Carlo)</li><li><b>Results</b>: Overall equity, range stats, and a 13&times;13 heatmap showing equity for each hand class</li><li>Green = high equity, Red = low equity in the heatmap</li></ul>`,
+    tabPostflopSolver: 'Postflop Solver',
+    flopInput: 'Flop:',
+    oopRange: 'OOP Range:',
+    ipRange: 'IP Range:',
+    oopBetSizes: 'OOP Bet Sizes (% pot):',
+    ipBetSizes: 'IP Bet Sizes (% pot):',
+    oopConsiderSizes: 'OOP Sizes (% pot) + Check/AllIn:',
+    ipConsiderSizes: 'IP Sizes (% pot) + Check/AllIn:',
+    maxRaises: 'Max Raises:',
+    advancedSettings: 'Advanced Settings',
+    solvingPostflop: 'Solving postflop...',
+    descPostflopSolver: `Solve postflop situations using <b>MCCFR</b> with hand class-based analysis. Computes GTO strategies for both OOP and IP players across flop, turn, and river.
+<ul><li><b>Flop</b>: Enter 3 community cards</li><li><b>Bet Sizes</b>: Configure bet sizes as % of pot for each position</li><li><b>Ranges</b>: Set starting ranges for OOP and IP players</li><li>Results show action frequencies per hand class (169) at each decision point as 13x13 grids</li></ul>`,
+    descPostflop: `Analyze a specific postflop situation for post-session review. Enter your hand, the board, pot/stack sizes, villain's bet, and their estimated range to get EV analysis and action recommendations.
+<ul><li><b>EV Calculation</b>: Shows expected value for Call, Fold, and Raise actions</li><li><b>Pot Odds</b>: The equity needed to break even on a call</li><li><b>Outs</b>: Cards that significantly improve your hand (flop/turn only)</li><li><b>Recommendation</b>: Suggested action based on equity vs pot odds</li></ul>`,
+    descEquity: `Calculate the <b>exact winning probability</b> of one hand against another by evaluating every possible board runout. Enter two hands using rank + suit notation (e.g. <code>As</code> = Ace of spades, <code>Td</code> = Ten of diamonds).
+<ul><li><b>Suits</b>: <code>s</code>=spade, <code>h</code>=heart, <code>d</code>=diamond, <code>c</code>=club</li><li><b>Ranks</b>: <code>2-9</code>, <code>T</code>=10, <code>J</code>=Jack, <code>Q</code>=Queen, <code>K</code>=King, <code>A</code>=Ace</li><li><b>Board</b> (optional): 3, 4, or 5 community cards separated by spaces</li><li>Click a preset button to quickly calculate common matchups</li></ul>`,
+    // Hand Flow
+    hfSetup: 'Setup', hfPreflop: 'Preflop', hfFlop: 'Flop', hfResults: 'Results',
+    hfOpener: 'Opener:', hfDefender: 'Defender:', hfSolvePreflop: 'Solve Preflop',
+    hfActionLine: 'Action Line', hfDealFlop: 'Deal Flop →',
+    hfSolvePostflop: 'Solve Postflop', hfSolvingPreflop: 'Solving preflop GTO...',
+    hfSolvingPostflop: 'Solving postflop...', hfHandEnd: 'Hand ended (fold)',
+    hfAllInNoPostflop: 'All-in (no postflop play)', hfPot: 'Pot', hfEffStack: 'Eff. Stack',
+    hfOOPPlayer: 'OOP', hfIPPlayer: 'IP', hfSelectFlop: 'Select at least 3 cards for the flop',
+    descHandFlow: `<b>Hand Flow</b> — Play through a hand from preflop to postflop in a natural flow. Solve preflop GTO, select an action line, derive ranges, deal the flop, and solve postflop.
+<ul><li><b>Setup</b>: Choose opener/defender positions, stack size, and mode</li><li><b>Preflop</b>: View GTO strategy and select the action line to analyze</li><li><b>Flop</b>: Enter board cards and configure postflop solver settings</li><li><b>Results</b>: View postflop GTO strategies per decision point</li></ul>`,
+    descPushfold: `Compute <b>Nash equilibrium push/fold charts</b> for short-stack preflop play. The SB can only go all-in (push) or fold. The BB can only call or fold. All 169 hand classes are solved simultaneously using CFR.
+<ul><li><b>Stacks</b> — Effective stack sizes in big blinds (comma-separated)</li><li><b>MC Samples</b> — Monte Carlo samples for the 169&times;169 equity matrix. More = more accurate</li><li><b>Iterations</b> — CFR training iterations per stack size</li><li>Results show a 13&times;13 grid: rows/columns = ranks, upper-right = suited, lower-left = offsuit, diagonal = pairs</li><li>Green intensity = push/call frequency. Hover for exact percentages</li></ul>`,
+  },
+  ja: {
+    title: 'GTO ポーカーソルバー',
+    subtitle: 'CFRベースのナッシュ均衡ソルバー',
+    tabEquity: 'エクイティ計算', tabPushfold: 'プッシュ/フォールド',
+    tabRangeEditor: 'レンジエディタ', tabRangeEquity: 'レンジ vs レンジ',
+    tabSolver: 'ソルバー',
+    subtabHandFlow: 'ハンドフロー',
+    subtabPushFold: 'プッシュ/フォールド',
+    subtabPostflopReview: 'ポストフロップ復習',
+    iterations: '反復回数:', solve: '解析', solving: '解析中...',
+    board: 'ボード:', calculate: '計算', calculating: '計算中...',
+    stacks: 'スタック (bb):', mcSamples: 'MCサンプル数:',
+    boardPlaceholder: '例: Td 7h 2s',
+    infoSets: '情報集合数', exploitability: '被搾取度',
+    Fold: 'フォールド', Check: 'チェック', Call: 'コール', Bet: 'ベット', Raise: 'レイズ',
+    Open: 'オープン', Limp: 'リンプ', ThreeBet: '3ベット', FourBet: '4ベット', AllIn: 'オールイン',
+    Overview: 'オーバービュー',
+    win: '勝ち', tie: '引き分け', lose: '負け', totalBoards: '評価ボード数:',
+    sbPush: 'SB プッシュレンジ', bbCall: 'BB コールレンジ',
+    range: 'レンジ:', combos: 'コンボ',
+    starting: '開始中...', computingMatrix: 'エクイティ行列を計算中...',
+    solvingStack: (s, p) => `スタック ${s} を解析中 (${p})...`,
+    calcEquity: 'エクイティを計算中...', unknownError: '不明なエラー',
+    solvingMatchup: (o, d, s, p) => `${o} vs ${d} ${s} を解析中 (${p})...`,
+    solvingMatchupIter: (o, d, s, p, i, t) => `${o} vs ${d} ${s} (${p}) — イテレーション ${Number(i).toLocaleString()}/${Number(t).toLocaleString()}`,
+    solvingStackIter: (s, p, i, t) => `スタック ${s} (${p}) — イテレーション ${Number(i).toLocaleString()}/${Number(t).toLocaleString()}`,
+    heroRange: 'ヒーローレンジ', villainRange: 'ヴィランレンジ',
+    clear: 'クリア', selectAll: '全選択', save: '保存',
+    analyze: '分析', analyzing: '分析中...',
+    heroHand: 'ヒーローハンド:', pot: 'ポット:', effStack: 'エフェクティブスタック:', villainBet: 'ヴィランベット:',
+    villainRangeLabel: 'ヴィランレンジ:',
+    equity: 'エクイティ', potOdds: 'ポットオッズ', action: 'アクション', ev: 'EV',
+    notes: '備考', evCall: 'EV (コール)', evFold: 'EV (フォールド)',
+    recommendation: '推奨', handCategory: 'ハンド', outs: 'アウツ',
+    boardTexture: 'ボードテクスチャ', paired: 'ペアボード', twoTone: 'ツートーン',
+    monotone: 'モノトーン', straightDraw: 'ストレート可能',
+    highCard: 'ハイカード',
+    evIfCalled: 'コールされた場合のEV', foldEqNeeded: '必要フォールドエクイティ',
+    heroEquity: 'ヒーローエクイティ', matchups: 'マッチアップ数', classEquity: 'ハンド別エクイティ',
+    rangeVsRange: 'レンジ vs レンジ', preflopMC: 'プリフロップ（モンテカルロ）...',
+    savedRanges: '保存済みレンジ',
+    stack: 'スタック (bb):', position: 'ポジション:', allPositions: '全て',
+    defender: 'ディフェンダー:', allDefenders: '全ディフェンダー',
+    mode: 'モード:', modeOpen: 'オープンのみ', mode3bet: '3betまで', modeFull: 'フル (4bet)',
+    solvingPreflop: 'プリフロップGTOを解析中...',
+    descPreflopGTO: `6-maxの<b>GTOプリフロップ戦略</b>をフルアクションツリーで計算します：オープン/3bet/4bet/オールイン。SB vs BBのみリンプあり。CFRで169種類のハンドクラスを同時に解析します。
+<ul><li><b>ポジション</b>: 特定のオープナーポジション、または「全て」を選択</li><li><b>ディフェンダー</b>: 対戦相手のポジションを選択（デフォルト: BB）。「全ディフェンダー」で有効な全マッチアップを解析</li><li><b>スタック</b>: 有効スタックサイズ（bb単位）</li><li><b>オーバービュー</b>: デフォルト表示で全アクションをカラーバーで一覧表示</li><li>個別アクションボタンで特定アクションの頻度グリッドに切替</li></ul>`,
+    descRangeEditor: `13&times;13のインタラクティブグリッドでカスタムハンドレンジを作成・保存できます。セルをクリックでON/OFF切替、ドラッグで複数選択。ポジション別プリセットを読み込んだり、オリジナルレンジを作成できます。
+<ul><li><b>グリッド配置</b>: 対角線=ペア、右上=スーテッド、左下=オフスート</li><li><b>プリセット</b>: 各ポジション（UTG〜BB）の標準オープンレンジ</li><li><b>保存/読込</b>: ブラウザストレージに保存して他のツールで再利用可能</li></ul>`,
+    descRangeEquity: `2つのハンドレンジ間のエクイティを特定のボードで計算します。ヒーローとヴィランのレンジを選択し、ボードカードを指定すると、全体のエクイティとハンド別エクイティの内訳が表示されます。
+<ul><li><b>ボード</b>: 3枚（フロップ）、4枚（ターン）、5枚（リバー）を入力。空欄ならプリフロップ（モンテカルロ）</li><li><b>結果</b>: 全体エクイティ、レンジ統計、ハンドクラス別エクイティの13&times;13ヒートマップ</li><li>緑=高エクイティ、赤=低エクイティ</li></ul>`,
+    tabPostflopSolver: 'ポストフロップソルバー',
+    flopInput: 'フロップ:',
+    oopRange: 'OOPレンジ:',
+    ipRange: 'IPレンジ:',
+    oopBetSizes: 'OOPベットサイズ (% ポット):',
+    ipBetSizes: 'IPベットサイズ (% ポット):',
+    oopConsiderSizes: 'OOP 考慮サイズ (% ポット) ※Check/AllIn常時含む:',
+    ipConsiderSizes: 'IP 考慮サイズ (% ポット) ※Check/AllIn常時含む:',
+    maxRaises: '最大レイズ数:',
+    advancedSettings: '詳細設定',
+    solvingPostflop: 'ポストフロップを解析中...',
+    descPostflopSolver: `<b>MCCFR</b>とハンド抽象化を使ってポストフロップ状況を解析します。OOPとIPの両プレイヤーのGTO戦略をフロップ・ターン・リバーで計算します。
+<ul><li><b>フロップ</b>: コミュニティカード3枚を入力</li><li><b>ベットサイズ</b>: 各ポジションのポット%でベットサイズを設定</li><li><b>レンジ</b>: OOPとIPの開始レンジを設定</li><li><b>バケット</b>: ハンド強度バケット数（多いほど精密だが遅い）</li><li>結果: 各決定ポイントでバケット別のアクション頻度を表示</li></ul>`,
+    descPostflop: `プレイ後のポストフロップ状況を分析します。ハンド、ボード、ポット/スタックサイズ、ヴィランのベット額、推定レンジを入力して、EV分析とアクション推奨を確認できます。
+<ul><li><b>EV計算</b>: コール、フォールド、レイズの期待値を表示</li><li><b>ポットオッズ</b>: コールで損益分岐点となるエクイティ</li><li><b>アウツ</b>: ハンドを大幅に改善するカード枚数（フロップ/ターンのみ）</li><li><b>推奨</b>: エクイティとポットオッズに基づく推奨アクション</li></ul>`,
+    descEquity: `2つのハンド間の<b>正確な勝率</b>を、全てのボードの組み合わせを列挙して計算します。ランク＋スートの表記でハンドを入力してください（例: <code>As</code> = スペードのA、<code>Td</code> = ダイヤの10）。
+<ul><li><b>スート</b>: <code>s</code>=スペード, <code>h</code>=ハート, <code>d</code>=ダイヤ, <code>c</code>=クラブ</li><li><b>ランク</b>: <code>2-9</code>, <code>T</code>=10, <code>J</code>=ジャック, <code>Q</code>=クイーン, <code>K</code>=キング, <code>A</code>=エース</li><li><b>ボード</b>（任意）: 3〜5枚のコミュニティカードをスペース区切りで入力</li><li>プリセットボタンで代表的なマッチアップをすぐに計算できます</li></ul>`,
+    // Hand Flow
+    hfSetup: 'セットアップ', hfPreflop: 'プリフロップ', hfFlop: 'フロップ', hfResults: '結果',
+    hfOpener: 'オープナー:', hfDefender: 'ディフェンダー:', hfSolvePreflop: 'プリフロップ解析',
+    hfActionLine: 'アクションライン', hfDealFlop: 'フロップへ →',
+    hfSolvePostflop: 'ポストフロップ解析', hfSolvingPreflop: 'プリフロップGTOを解析中...',
+    hfSolvingPostflop: 'ポストフロップを解析中...', hfHandEnd: 'ハンド終了（フォールド）',
+    hfAllInNoPostflop: 'オールイン（ポストフロップ判断なし）', hfPot: 'ポット', hfEffStack: 'エフェクティブスタック',
+    hfOOPPlayer: 'OOP', hfIPPlayer: 'IP', hfSelectFlop: 'フロップのカードを3枚以上選択してください',
+    descHandFlow: `<b>ハンドフロー</b> — プリフロップからポストフロップまで、ポーカーの自然な流れでGTOを解析します。プリフロップGTOを解析し、アクションラインを選択し、レンジを自動導出し、フロップを入力してポストフロップを解析します。
+<ul><li><b>セットアップ</b>: オープナー/ディフェンダーのポジション、スタック、モードを選択</li><li><b>プリフロップ</b>: GTO戦略を確認し、分析するアクションラインを選択</li><li><b>フロップ</b>: ボードカードを入力し、ポストフロップソルバーの設定を構成</li><li><b>結果</b>: 決定ポイントごとのポストフロップGTO戦略を表示</li></ul>`,
+    descPushfold: `ショートスタックのプリフロップにおける<b>ナッシュ均衡プッシュ/フォールドチャート</b>を計算します。SBはオールイン（プッシュ）かフォールドのみ、BBはコールかフォールドのみ。169種類のハンドクラスをCFRで同時に解析します。
+<ul><li><b>スタック</b> — 有効スタックサイズ（bb単位、カンマ区切り）</li><li><b>MCサンプル数</b> — 169&times;169エクイティ行列のモンテカルロサンプル数。多いほど正確</li><li><b>反復回数</b> — スタックサイズごとのCFR学習回数</li><li>結果は13&times;13グリッドで表示：行/列=ランク、右上=スーテッド、左下=オフスート、対角線=ペア</li><li>緑の濃さ=プッシュ/コール頻度。ホバーで正確な%を表示</li></ul>`,
+  }
+};
+
+function t(key) { return i18n[lang][key] || i18n['en'][key] || key; }
+function ta(action) { return t(action) || action; }
+
+function setLang(l) {
+  lang = l;
+  localStorage.setItem('gto-lang', l);
+  document.querySelectorAll('.lang-btn').forEach(b => b.classList.toggle('active', b.dataset.lang === l));
+  document.documentElement.lang = l === 'ja' ? 'ja' : 'en';
+  document.getElementById('h-title').textContent = t('title');
+  document.getElementById('h-subtitle').textContent = t('subtitle');
+  document.getElementById('tab-equity').textContent = t('tabEquity');
+  document.getElementById('tab-range-editor').textContent = t('tabRangeEditor');
+  document.getElementById('tab-range-equity').textContent = t('tabRangeEquity');
+  document.getElementById('tab-solver').textContent = t('tabSolver');
+  document.getElementById('subtab-hand-flow').textContent = t('subtabHandFlow');
+  document.getElementById('subtab-pushfold').textContent = t('subtabPushFold');
+  document.getElementById('subtab-postflop-review').textContent = t('subtabPostflopReview');
+  document.getElementById('lbl-board').textContent = t('board');
+  document.getElementById('lbl-pf-stacks').textContent = t('stacks');
+  document.getElementById('lbl-pf-samples').textContent = t('mcSamples');
+  document.getElementById('lbl-pf-iter').textContent = t('iterations');
+  document.getElementById('eq-board').placeholder = t('boardPlaceholder');
+  document.getElementById('rr-board').placeholder = t('boardPlaceholder');
+  document.getElementById('pf-board').placeholder = t('boardPlaceholder');
+  document.getElementById('lbl-rr-board').textContent = t('board');
+  document.getElementById('rr-hero-label').textContent = t('heroRange');
+  document.getElementById('rr-villain-label').textContent = t('villainRange');
+  document.getElementById('lbl-pf-hero').textContent = t('heroHand');
+  document.getElementById('lbl-pf-board').textContent = t('board');
+  document.getElementById('lbl-pf-pot').textContent = t('pot');
+  document.getElementById('lbl-pf-stack').textContent = t('effStack');
+  document.getElementById('lbl-pf-vbet').textContent = t('villainBet');
+  document.getElementById('lbl-pf-vrange').textContent = t('villainRangeLabel');
+  // Hand Flow labels
+  document.getElementById('hf-step-label-1').textContent = t('hfSetup');
+  document.getElementById('hf-step-label-2').textContent = t('hfPreflop');
+  document.getElementById('hf-step-label-3').textContent = t('hfFlop');
+  document.getElementById('hf-step-label-4').textContent = t('hfResults');
+  document.getElementById('lbl-hf-opener').textContent = t('hfOpener');
+  document.getElementById('lbl-hf-defender').textContent = t('hfDefender');
+  document.getElementById('lbl-hf-stack').textContent = t('stack');
+  document.getElementById('lbl-hf-mode').textContent = t('mode');
+  document.getElementById('hf-mode-open').textContent = t('modeOpen');
+  document.getElementById('hf-mode-3bet').textContent = t('mode3bet');
+  document.getElementById('hf-mode-full').textContent = t('modeFull');
+  document.getElementById('lbl-hf-iter').textContent = t('iterations');
+  document.getElementById('lbl-hf-action-line').textContent = t('hfActionLine');
+  document.getElementById('lbl-hf-board').textContent = t('board');
+  document.getElementById('lbl-hf-oop-bet').textContent = t('oopConsiderSizes');
+  document.getElementById('lbl-hf-ip-bet').textContent = t('ipConsiderSizes');
+  document.getElementById('lbl-hf-max-raises').textContent = t('maxRaises');
+  document.getElementById('lbl-hf-advanced').textContent = t('advancedSettings');
+  document.getElementById('lbl-hf-pfs-iter').textContent = t('iterations');
+  document.getElementById('desc-hand-flow').innerHTML = t('descHandFlow');
+  const hfSolveBtn = document.getElementById('hf-solve-preflop');
+  if (!hfSolveBtn.disabled) hfSolveBtn.textContent = t('hfSolvePreflop');
+  const hfDealBtn = document.getElementById('hf-deal-flop');
+  if (!hfDealBtn.disabled) hfDealBtn.textContent = t('hfDealFlop');
+  const hfSolvePfsBtn = document.getElementById('hf-solve-postflop');
+  if (!hfSolvePfsBtn.disabled) hfSolvePfsBtn.textContent = t('hfSolvePostflop');
+  document.getElementById('re-clear-btn').textContent = t('clear');
+  document.getElementById('re-all-btn').textContent = t('selectAll');
+  document.getElementById('re-save-btn').textContent = t('save');
+  // Buttons
+  const ec = document.getElementById('eq-calc');
+  if (!ec.disabled) ec.textContent = t('calculate');
+  const ps = document.getElementById('pf-solve');
+  if (!ps.disabled) ps.textContent = t('solve');
+  const rc = document.getElementById('rr-calc');
+  if (!rc.disabled) rc.textContent = t('calculate');
+  const pa = document.getElementById('pf-analyze');
+  if (!pa.disabled) pa.textContent = t('analyze');
+  // Descriptions
+  document.getElementById('desc-equity').innerHTML = t('descEquity');
+  document.getElementById('desc-pushfold').innerHTML = t('descPushfold');
+  document.getElementById('desc-range-editor').innerHTML = t('descRangeEditor');
+  document.getElementById('desc-range-equity').innerHTML = t('descRangeEquity');
+  document.getElementById('desc-postflop').innerHTML = t('descPostflop');
+  // Re-render cached results
+  if (lastEquityData) document.getElementById('equity-result').innerHTML = renderEquity(lastEquityData);
+  if (lastPfData) document.getElementById('pf-result').innerHTML = renderPushFold(lastPfData);
+  if (lastRRData) document.getElementById('rr-result').innerHTML = renderRangeEquity(lastRRData);
+  if (lastPostflopData) document.getElementById('pf-review-result').innerHTML = renderPostflop(lastPostflopData);
+  if (lastPreflopGTOData && hfState.phase >= 2) {
+    document.getElementById('hf-preflop-gto-result').innerHTML = renderPreflopGTO(lastPreflopGTOData);
+    pfgInitActiveStyles();
+  }
+  updateEditorInfo();
+  updateRRInfo('hero');
+  updateRRInfo('villain');
+}
+
+let lastEquityData = null, lastPfData = null;
+let lastRRData = null, lastPostflopData = null, lastPreflopGTOData = null;
+
+// ============================================================
+// Tab switching
+// ============================================================
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(tab.dataset.tab).classList.add('active');
+  });
+});
+
+function switchSubTab(panelId, subId) {
+  const panel = document.getElementById(panelId);
+  panel.querySelectorAll('.sub-tab').forEach(t => t.classList.remove('active'));
+  panel.querySelectorAll('.sub-panel').forEach(p => p.classList.remove('active'));
+  panel.querySelector(`[data-subtab="${subId}"]`).classList.add('active');
+  document.getElementById(subId).classList.add('active');
+}
+
+function setLoading(btnId, loading) {
+  const btn = document.getElementById(btnId);
+  btn.disabled = loading;
+  if (btnId === 'eq-calc' || btnId === 'rr-calc') {
+    btn.innerHTML = loading ? `<span class="spinner"></span>${t('calculating')}` : t('calculate');
+  } else if (btnId === 'pf-analyze') {
+    btn.innerHTML = loading ? `<span class="spinner"></span>${t('analyzing')}` : t('analyze');
+  } else {
+    btn.innerHTML = loading ? `<span class="spinner"></span>${t('solving')}` : t('solve');
+  }
+}
+
+// ============================================================
+// Progress tracking
+// ============================================================
+const jobTimers = {};
+
+function startJobTimer(jobId) {
+  jobTimers[jobId] = Date.now();
+}
+
+function getElapsed(jobId) {
+  const start = jobTimers[jobId];
+  if (!start) return '';
+  const sec = Math.floor((Date.now() - start) / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  return `${min}m ${sec % 60}s`;
+}
+
+function renderProgressCard(data, jobId) {
+  const pct = data.progress_pct;
+  const step = data.current_step || 0;
+  const total = data.total_steps || 0;
+  const msg = translateProgress(data.progress || '');
+  const elapsed = getElapsed(jobId);
+  const hasPct = pct >= 0;
+  const pctDisplay = hasPct ? Math.round(pct) : '';
+  const barWidth = hasPct ? `${Math.max(2, pct)}%` : '30%';
+  const barClass = hasPct ? '' : ' indeterminate';
+  const stepText = total > 0 ? `${step} / ${total}` : '';
+
+  return `<div class="progress-card">
+    <div class="progress-label"><span class="spinner"></span>${msg}</div>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
+      ${hasPct ? `<span class="progress-pct">${pctDisplay}%</span>` : ''}
+      <div class="progress-bar-track" style="flex:1;">
+        <div class="progress-bar-fill${barClass}" style="width:${barWidth};"></div>
+      </div>
+    </div>
+    <div class="progress-meta">
+      <span>${stepText}</span>
+      <span>${elapsed}</span>
+    </div>
+  </div>`;
+}
+
+// ============================================================
+// Hand class utilities (shared)
+// ============================================================
+const RANKS_STR = ['2','3','4','5','6','7','8','9','T','J','Q','K','A'];
+const LABELS = [...RANKS_STR].reverse();
+
+function buildHandNames() {
+  const names = [];
+  for (let r = 0; r < 13; r++) {
+    const row = [];
+    for (let c = 0; c < 13; c++) {
+      const ri = 12 - r, ci = 12 - c;
+      if (ri === ci) row.push(RANKS_STR[ri] + RANKS_STR[ri]);
+      else if (ci > ri) row.push(RANKS_STR[ci] + RANKS_STR[ri] + 'o');
+      else row.push(RANKS_STR[ri] + RANKS_STR[ci] + 's');
+    }
+    names.push(row);
+  }
+  return names;
+}
+
+function gridToRange(grid) {
+  const range = new Array(169).fill(0);
+  for (let r = 0; r < 13; r++) {
+    for (let c = 0; c < 13; c++) {
+      const ri = 12 - r, ci = 12 - c;
+      let cls;
+      if (ri === ci) cls = ri;
+      else if (ci > ri) cls = 91 + ci*(ci-1)/2 + ri;
+      else cls = 13 + ri*(ri-1)/2 + ci;
+      range[cls] = grid[r][c];
+    }
+  }
+  return range;
+}
+
+function rangeToGrid(range) {
+  const grid = Array.from({length:13}, () => new Array(13).fill(0));
+  for (let r = 0; r < 13; r++) {
+    for (let c = 0; c < 13; c++) {
+      const ri = 12 - r, ci = 12 - c;
+      let cls;
+      if (ri === ci) cls = ri;
+      else if (ci > ri) cls = 91 + ci*(ci-1)/2 + ri;
+      else cls = 13 + ri*(ri-1)/2 + ci;
+      grid[r][c] = range[cls] || 0;
+    }
+  }
+  return grid;
+}
+
+function rangeStats(range) {
+  let combos = 0, total = 0;
+  for (let i = 0; i < 169; i++) {
+    const cnt = i < 13 ? 6 : i < 91 ? 4 : 12;
+    combos += cnt * (range[i] || 0);
+    total += cnt;
+  }
+  return { pct: (combos/total*100), combos: combos };
+}
+
+const HAND_NAMES = buildHandNames();
+
+// ============================================================
+// Interactive Range Grid
+// ============================================================
+function createRangeGrid(containerId, onUpdate) {
+  const grid = Array.from({length:13}, () => new Array(13).fill(0));
+  const container = document.getElementById(containerId);
+  let isDragging = false, dragValue = 1;
+
+  function render() {
+    let html = '<table class="range-grid"><tr><th></th>';
+    for (const l of LABELS) html += `<th>${l}</th>`;
+    html += '</tr>';
+    for (let r = 0; r < 13; r++) {
+      html += `<tr><th>${LABELS[r]}</th>`;
+      for (let c = 0; c < 13; c++) {
+        const freq = grid[r][c];
+        const name = HAND_NAMES[r][c];
+        const bg = freq > 0.005 ? `rgba(35,134,54,${0.15+freq*0.85})` : '#0d1117';
+        const fg = freq > 0.5 ? '#fff' : '#c9d1d9';
+        html += `<td data-r="${r}" data-c="${c}" style="background:${bg};color:${fg};" title="${name}: ${(freq*100).toFixed(0)}%">${name}</td>`;
+      }
+      html += '</tr>';
+    }
+    html += '</table>';
+    container.innerHTML = html;
+    attachEvents();
+  }
+
+  function attachEvents() {
+    const tds = container.querySelectorAll('td');
+    tds.forEach(td => {
+      td.addEventListener('mousedown', e => {
+        e.preventDefault();
+        const r = +td.dataset.r, c = +td.dataset.c;
+        isDragging = true;
+        dragValue = grid[r][c] > 0.5 ? 0 : 1;
+        grid[r][c] = dragValue;
+        render();
+        if (onUpdate) onUpdate();
+      });
+      td.addEventListener('mouseenter', e => {
+        if (!isDragging) return;
+        const r = +td.dataset.r, c = +td.dataset.c;
+        grid[r][c] = dragValue;
+        render();
+        if (onUpdate) onUpdate();
+      });
+    });
+  }
+
+  document.addEventListener('mouseup', () => { isDragging = false; });
+
+  render();
+
+  return {
+    getRange: () => gridToRange(grid),
+    setRange: (range) => {
+      const g = rangeToGrid(range);
+      for (let r = 0; r < 13; r++) for (let c = 0; c < 13; c++) grid[r][c] = g[r][c];
+      render();
+      if (onUpdate) onUpdate();
+    },
+    clear: () => {
+      for (let r = 0; r < 13; r++) for (let c = 0; c < 13; c++) grid[r][c] = 0;
+      render();
+    },
+    selectAll: () => {
+      for (let r = 0; r < 13; r++) for (let c = 0; c < 13; c++) grid[r][c] = 1;
+      render();
+    },
+    getGrid: () => grid,
+  };
+}
+
+// ============================================================
+// Presets
+// ============================================================
+let presetsData = null;
+
+async function loadPresets() {
+  try {
+    const res = await fetch('/api/range-presets');
+    presetsData = (await res.json()).presets;
+    populatePresetDropdowns();
+  } catch(e) { console.error('Failed to load presets:', e); }
+}
+
+function populatePresetDropdowns() {
+  if (!presetsData) return;
+  const selectors = ['re-preset', 'rr-hero-preset', 'rr-villain-preset', 'pf-vrange-preset'];
+  for (const id of selectors) {
+    const sel = document.getElementById(id);
+    const first = sel.querySelector('option');
+    sel.innerHTML = '';
+    sel.appendChild(first);
+    for (const [key, val] of Object.entries(presetsData)) {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = lang === 'ja' ? val.name_ja : val.name_en;
+      sel.appendChild(opt);
+    }
+    const saved = getSavedRangeNames();
+    if (saved.length > 0) {
+      const optgroup = document.createElement('optgroup');
+      optgroup.label = t('savedRanges');
+      for (const name of saved) {
+        const opt = document.createElement('option');
+        opt.value = 'saved:' + name;
+        opt.textContent = name;
+        optgroup.appendChild(opt);
+      }
+      sel.appendChild(optgroup);
+    }
+  }
+}
+
+function getPresetRange(key) {
+  if (key.startsWith('saved:')) {
+    const name = key.slice(6);
+    const data = localStorage.getItem('gto-range-' + name);
+    return data ? JSON.parse(data) : null;
+  }
+  return presetsData && presetsData[key] ? presetsData[key].range : null;
+}
+
+// ============================================================
+// Range Editor
+// ============================================================
+let editorGrid = null;
+
+function initRangeEditor() {
+  editorGrid = createRangeGrid('re-grid-container', updateEditorInfo);
+  updateEditorInfo();
+  refreshSavedList();
+}
+
+function updateEditorInfo() {
+  if (!editorGrid) return;
+  const stats = rangeStats(editorGrid.getRange());
+  document.getElementById('re-info').textContent =
+    `${t('range')} ${stats.pct.toFixed(1)}% (${Math.round(stats.combos)}/1326 ${t('combos')})`;
+}
+
+function loadPresetToEditor() {
+  const key = document.getElementById('re-preset').value;
+  if (!key) return;
+  const range = getPresetRange(key);
+  if (range) editorGrid.setRange(range);
+  document.getElementById('re-preset').value = '';
+}
+
+function clearEditorRange() { editorGrid.clear(); updateEditorInfo(); }
+function selectAllEditorRange() { editorGrid.selectAll(); updateEditorInfo(); }
+
+function saveEditorRange() {
+  const name = document.getElementById('re-save-name').value.trim();
+  if (!name) return;
+  localStorage.setItem('gto-range-' + name, JSON.stringify(editorGrid.getRange()));
+  document.getElementById('re-save-name').value = '';
+  refreshSavedList();
+  populatePresetDropdowns();
+}
+
+function getSavedRangeNames() {
+  const names = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key.startsWith('gto-range-')) names.push(key.slice(10));
+  }
+  return names.sort();
+}
+
+function refreshSavedList() {
+  const el = document.getElementById('re-saved-list');
+  const names = getSavedRangeNames();
+  if (names.length === 0) { el.innerHTML = ''; return; }
+  el.innerHTML = names.map(n =>
+    `<div class="saved-item" onclick="loadSavedRange('${n}')">${n}<span class="del-btn" onclick="event.stopPropagation();deleteSavedRange('${n}')">&times;</span></div>`
+  ).join('');
+}
+
+function loadSavedRange(name) {
+  const data = localStorage.getItem('gto-range-' + name);
+  if (data) editorGrid.setRange(JSON.parse(data));
+}
+
+function deleteSavedRange(name) {
+  localStorage.removeItem('gto-range-' + name);
+  refreshSavedList();
+  populatePresetDropdowns();
+}
+
+// ============================================================
+// Range vs Range
+// ============================================================
+let rrGrids = {};
+let rrJobId = null;
+
+function initRangeVsRange() {
+  rrGrids.hero = createRangeGrid('rr-hero-grid', () => updateRRInfo('hero'));
+  rrGrids.villain = createRangeGrid('rr-villain-grid', () => updateRRInfo('villain'));
+  updateRRInfo('hero');
+  updateRRInfo('villain');
+}
+
+function updateRRInfo(side) {
+  if (!rrGrids[side]) return;
+  const stats = rangeStats(rrGrids[side].getRange());
+  document.getElementById(`rr-${side}-info`).textContent =
+    `${t('range')} ${stats.pct.toFixed(1)}% (${Math.round(stats.combos)}/1326 ${t('combos')})`;
+}
+
+function loadPresetToRR(side) {
+  const key = document.getElementById(`rr-${side}-preset`).value;
+  if (!key) return;
+  const range = getPresetRange(key);
+  if (range) rrGrids[side].setRange(range);
+  document.getElementById(`rr-${side}-preset`).value = '';
+}
+
+async function calcRangeEquity() {
+  setLoading('rr-calc', true);
+  const el = document.getElementById('rr-result');
+  const prog = document.getElementById('rr-progress');
+  el.innerHTML = '';
+  prog.innerHTML = `<div class="progress"><span class="spinner"></span>${t('calculating')}</div>`;
+
+  const boardStr = document.getElementById('rr-board').value.trim();
+  const board = boardStr ? boardStr.split(/\s+/) : [];
+  const range1 = rrGrids.hero.getRange();
+  const range2 = rrGrids.villain.getRange();
+
+  try {
+    const res = await fetch('/api/range-equity', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ range1, range2, board })
+    });
+    const data = await res.json();
+
+    if (data.error) {
+      prog.innerHTML = '';
+      el.innerHTML = `<div class="error">${data.error}</div>`;
+      setLoading('rr-calc', false);
+      return;
+    }
+
+    if (data.job_id) {
+      rrJobId = data.job_id;
+      startJobTimer(rrJobId);
+      pollRangeEquity();
+      return;
+    }
+
+    prog.innerHTML = '';
+    lastRRData = data;
+    el.innerHTML = renderRangeEquity(data);
+    setLoading('rr-calc', false);
+  } catch(e) {
+    prog.innerHTML = '';
+    el.innerHTML = `<div class="error">${e.message}</div>`;
+    setLoading('rr-calc', false);
+  }
+}
+
+async function pollRangeEquity() {
+  if (!rrJobId) return;
+  try {
+    const res = await fetch(`/api/range-equity/status/${rrJobId}`);
+    const data = await res.json();
+    const prog = document.getElementById('rr-progress');
+    if (data.status === 'running') {
+      prog.innerHTML = renderProgressCard(data, rrJobId);
+      setTimeout(pollRangeEquity, 500);
+    } else if (data.status === 'completed') {
+      prog.innerHTML = '';
+      lastRRData = data.result;
+      document.getElementById('rr-result').innerHTML = renderRangeEquity(data.result);
+      setLoading('rr-calc', false);
+    } else {
+      prog.innerHTML = `<div class="error">${data.error || t('unknownError')}</div>`;
+      setLoading('rr-calc', false);
+    }
+  } catch(e) {
+    document.getElementById('rr-progress').innerHTML = `<div class="error">${e.message}</div>`;
+    setLoading('rr-calc', false);
+  }
+}
+
+function renderRangeEquity(data) {
+  let html = '<div class="result-meta">';
+  html += metaItem(t('heroEquity'), data.equity.toFixed(2) + '%');
+  html += metaItem(t('matchups'), data.total_matchups.toLocaleString());
+  html += metaItem(t('heroRange'), data.range1_pct.toFixed(1) + '% (' + Math.round(data.range1_combos) + ')');
+  html += metaItem(t('villainRange'), data.range2_pct.toFixed(1) + '% (' + Math.round(data.range2_combos) + ')');
+  html += '</div>';
+
+  const eq = data.equity;
+  html += `<div class="eq-bar-container" style="max-width:500px;">
+    <div class="eq-bar-win" style="width:${eq}%"></div>
+  </div>
+  <div style="font-size:12px;color:#8b949e;margin-bottom:16px;">${t('heroRange')}: ${eq.toFixed(2)}% — ${t('villainRange')}: ${(100-eq).toFixed(2)}%</div>`;
+
+  if (data.equity_grid) {
+    html += `<div class="section-title">${t('classEquity')}</div>`;
+    html += renderEquityHeatmap(data.equity_grid, data.weight_grid, data.labels, data.hand_names);
+  }
+  return html;
+}
+
+function renderEquityHeatmap(eqGrid, weightGrid, labels, names) {
+  let html = '<div class="grid-container"><table class="pf-grid"><tr><th></th>';
+  for (const l of labels) html += `<th>${l}</th>`;
+  html += '</tr>';
+  for (let r = 0; r < 13; r++) {
+    html += `<tr><th>${labels[r]}</th>`;
+    for (let c = 0; c < 13; c++) {
+      const eq = eqGrid[r][c];
+      const w = weightGrid[r][c];
+      const name = names[r][c];
+      if (w < 0.001) {
+        html += `<td style="background:#0d1117;color:#484f58;" title="${name}: N/A">${name}</td>`;
+      } else {
+        const pct = (eq * 100).toFixed(0);
+        const bg = equityColor(eq);
+        const fg = eq > 0.5 ? '#fff' : '#c9d1d9';
+        html += `<td style="background:${bg};color:${fg};" title="${name}: ${(eq*100).toFixed(1)}%">${pct}</td>`;
+      }
+    }
+    html += '</tr>';
+  }
+  html += '</table></div>';
+  return html;
+}
+
+function equityColor(eq) {
+  if (eq > 0.5) {
+    const t = (eq - 0.5) * 2;
+    const r = Math.round(210 * (1-t));
+    const g = Math.round(134 + 100*t);
+    const b = Math.round(54);
+    return `rgba(${r},${g},${b},0.8)`;
+  } else {
+    const t = eq * 2;
+    const r = Math.round(218 - 8*t);
+    const g = Math.round(54 + 80*t);
+    const b = Math.round(51 + 3*t);
+    return `rgba(${r},${g},${b},0.8)`;
+  }
+}
+
+// ============================================================
+// Postflop Review
+// ============================================================
+let pfVillainGrid = null;
+
+function initPostflop() {
+  pfVillainGrid = createRangeGrid('pf-mini-grid-container', () => {});
+}
+
+function loadPresetToPostflop() {
+  const key = document.getElementById('pf-vrange-preset').value;
+  if (!key) return;
+  const range = getPresetRange(key);
+  if (range) pfVillainGrid.setRange(range);
+  document.getElementById('pf-vrange-preset').value = '';
+}
+
+async function analyzePostflop() {
+  setLoading('pf-analyze', true);
+  const el = document.getElementById('pf-review-result');
+  el.innerHTML = `<div class="progress"><span class="spinner"></span>${t('analyzing')}</div>`;
+
+  const boardStr = document.getElementById('pf-board').value.trim();
+  const board = boardStr ? boardStr.split(/\s+/) : [];
+
+  try {
+    const res = await fetch('/api/postflop-review', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        hero_hand: [
+          document.getElementById('pf-hero-a').value.trim(),
+          document.getElementById('pf-hero-b').value.trim(),
+        ],
+        board,
+        pot: parseFloat(document.getElementById('pf-pot').value) || 0,
+        effective_stack: parseFloat(document.getElementById('pf-eff-stack').value) || 0,
+        villain_bet: parseFloat(document.getElementById('pf-vbet').value) || 0,
+        villain_range: pfVillainGrid.getRange(),
+      })
+    });
+    const data = await res.json();
+    if (data.error) { el.innerHTML = `<div class="error">${data.error}</div>`; setLoading('pf-analyze', false); return; }
+    lastPostflopData = data;
+    el.innerHTML = renderPostflop(data);
+  } catch(e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
+  finally { setLoading('pf-analyze', false); }
+}
+
+function renderPostflop(d) {
+  const recClass = d.recommendation === 'call' ? 'badge-call' :
+                   d.recommendation === 'fold' ? 'badge-fold' :
+                   d.recommendation === 'bet' || d.recommendation === 'raise' ? 'badge-bet' : 'badge-check';
+  const recLabel = ta(d.recommendation.charAt(0).toUpperCase() + d.recommendation.slice(1));
+
+  let html = '<div class="review-result">';
+  html += `<div class="hero-info">${d.hero_hand_name}${d.hand_category ? ' — ' + d.hand_category : ''}</div>`;
+  html += `<div class="equity-big">${d.hero_equity.toFixed(1)}%</div>`;
+  html += `<div style="font-size:13px;color:#8b949e;margin-bottom:12px;">${t('heroEquity')} vs ${t('villainRange')}</div>`;
+
+  html += `<div class="eq-bar-container" style="max-width:400px;">
+    <div class="eq-bar-win" style="width:${d.hero_equity}%"></div>
+  </div>`;
+
+  html += `<div style="margin:16px 0;"><span class="badge ${recClass}">${recLabel}</span></div>`;
+
+  html += '<div class="result-meta">';
+  html += metaItem(t('potOdds'), d.pot_odds.toFixed(1) + '%');
+  if (d.outs > 0) html += metaItem(t('outs'), d.outs);
+  html += '</div>';
+
+  html += `<table class="ev-table"><tr><th>${t('action')}</th><th>${t('ev')}</th><th>${t('notes')}</th></tr>`;
+  const evCallClass = d.ev_call >= 0 ? 'positive' : 'negative';
+  html += `<tr><td>${ta('Call')}</td><td class="${evCallClass}">${d.ev_call >= 0 ? '+' : ''}${d.ev_call.toFixed(1)}</td><td>${d.hero_equity.toFixed(1)}% ${d.hero_equity > d.pot_odds ? '>' : '<'} ${d.pot_odds.toFixed(1)}% ${t('potOdds')}</td></tr>`;
+  html += `<tr><td>${ta('Fold')}</td><td class="zero">0.0</td><td>—</td></tr>`;
+
+  for (const r of d.ev_raise) {
+    const cls = r.ev_if_called >= 0 ? 'positive' : 'negative';
+    html += `<tr><td>${ta('Raise')} ${Math.round(r.size)}</td><td class="${cls}">${r.ev_if_called >= 0 ? '+' : ''}${r.ev_if_called.toFixed(1)}</td>`;
+    html += `<td>${t('foldEqNeeded')}: ${r.fold_equity_needed.toFixed(0)}%</td></tr>`;
+  }
+  html += '</table>';
+
+  if (d.board_texture) {
+    const tex = d.board_texture;
+    html += `<div style="margin-top:12px;font-size:13px;color:#8b949e;">${t('boardTexture')}:</div>`;
+    html += '<div class="board-tex">';
+    if (tex.paired) html += `<span class="tag">${t('paired')}</span>`;
+    if (tex.two_tone) html += `<span class="tag">${t('twoTone')}</span>`;
+    if (tex.monotone) html += `<span class="tag">${t('monotone')}</span>`;
+    if (tex.straight_possible) html += `<span class="tag">${t('straightDraw')}</span>`;
+    if (tex.high_card) html += `<span class="tag">${t('highCard')}: ${tex.high_card}</span>`;
+    html += '</div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
+// ============================================================
+// Equity Calculator
+// ============================================================
+function setEquity(h1a, h1b, h2a, h2b) {
+  document.getElementById('eq-h1a').value = h1a;
+  document.getElementById('eq-h1b').value = h1b;
+  document.getElementById('eq-h2a').value = h2a;
+  document.getElementById('eq-h2b').value = h2b;
+  document.getElementById('eq-board').value = '';
+  calcEquity();
+}
+
+async function calcEquity() {
+  setLoading('eq-calc', true);
+  const el = document.getElementById('equity-result');
+  el.innerHTML = `<div class="progress"><span class="spinner"></span>${t('calcEquity')}</div>`;
+  const boardStr = document.getElementById('eq-board').value.trim();
+  const board = boardStr ? boardStr.split(/\s+/) : [];
+  try {
+    const res = await fetch('/api/equity', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        hand1: [document.getElementById('eq-h1a').value.trim(), document.getElementById('eq-h1b').value.trim()],
+        hand2: [document.getElementById('eq-h2a').value.trim(), document.getElementById('eq-h2b').value.trim()],
+        board: board,
+      })
+    });
+    const data = await res.json();
+    if (data.error) { el.innerHTML = `<div class="error">${data.error}</div>`; return; }
+    lastEquityData = data;
+    el.innerHTML = renderEquity(data);
+  } catch(e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
+  finally { setLoading('eq-calc', false); }
+}
+
+function renderEquity(d) {
+  return `<div class="eq-result">
+    <div class="matchup">${d.hand1_name} vs ${d.hand2_name}</div>
+    <div class="equity-big">${d.equity.toFixed(2)}%</div>
+    <div class="eq-bar-container">
+      <div class="eq-bar-win" style="width:${d.win_pct}%"></div>
+      <div class="eq-bar-tie" style="width:${d.tie_pct}%"></div>
+    </div>
+    <div class="eq-stats">
+      <div class="stat win"><div class="val">${d.win_pct.toFixed(2)}%</div><div class="lbl">${t('win')}</div></div>
+      <div class="stat tie"><div class="val">${d.tie_pct.toFixed(2)}%</div><div class="lbl">${t('tie')}</div></div>
+      <div class="stat lose"><div class="val">${d.lose_pct.toFixed(2)}%</div><div class="lbl">${t('lose')}</div></div>
+    </div>
+    <div style="margin-top:12px;font-size:12px;color:#8b949e;">${t('totalBoards')} ${d.total.toLocaleString()}</div>
+  </div>`;
+}
+
+// ============================================================
+// Push/Fold
+// ============================================================
+let pfJobId = null;
+
+async function solvePushFold() {
+  setLoading('pf-solve', true);
+  const el = document.getElementById('pf-result');
+  const prog = document.getElementById('pf-progress');
+  el.innerHTML = '';
+  prog.innerHTML = `<div class="progress"><span class="spinner"></span>${t('starting')}</div>`;
+  const stacks = document.getElementById('pf-stacks').value.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+  try {
+    const res = await fetch('/api/pushfold/start', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        stacks: stacks,
+        mc_samples: parseInt(document.getElementById('pf-samples').value),
+        iterations: parseInt(document.getElementById('pf-iter').value),
+      })
+    });
+    const data = await res.json();
+    pfJobId = data.job_id;
+    startJobTimer(pfJobId);
+    pollPushFold();
+  } catch(e) {
+    prog.innerHTML = `<div class="error">${e.message}</div>`;
+    setLoading('pf-solve', false);
+  }
+}
+
+function translateProgress(msg) {
+  if (msg === 'Starting...') return t('starting');
+  if (msg === 'Computing equity matrix...') return t('computingMatrix');
+  if (msg.startsWith('Computing range vs range')) return t('preflopMC');
+  const mi = msg.match(/^Solving stack (.+bb) \((\d+\/\d+)\) - iter (\d+)\/(\d+)$/);
+  if (mi) return t('solvingStackIter')(mi[1], mi[2], mi[3], mi[4]);
+  const m = msg.match(/^Solving stack (.+bb) \((\d+\/\d+)\)\.\.\.$/);
+  if (m) return t('solvingStack')(m[1], m[2]);
+  const m2i = msg.match(/^Solving (.+) vs (.+) (.+bb) \((\d+\/\d+)\) - iter (\d+)\/(\d+)$/);
+  if (m2i) return t('solvingMatchupIter')(m2i[1], m2i[2], m2i[3], m2i[4], m2i[5], m2i[6]);
+  const m2 = msg.match(/^Solving (.+) vs (.+) (.+bb) \((\d+\/\d+)\)\.\.\.$/);
+  if (m2) return t('solvingMatchup')(m2[1], m2[2], m2[3], m2[4]);
+  return msg;
+}
+
+async function pollPushFold() {
+  if (!pfJobId) return;
+  try {
+    const res = await fetch(`/api/pushfold/status/${pfJobId}`);
+    const data = await res.json();
+    const prog = document.getElementById('pf-progress');
+    if (data.status === 'running') {
+      prog.innerHTML = renderProgressCard(data, pfJobId);
+      setTimeout(pollPushFold, 500);
+    } else if (data.status === 'completed') {
+      prog.innerHTML = '';
+      lastPfData = data.result;
+      document.getElementById('pf-result').innerHTML = renderPushFold(data.result);
+      setLoading('pf-solve', false);
+    } else {
+      prog.innerHTML = `<div class="error">${data.error || t('unknownError')}</div>`;
+      setLoading('pf-solve', false);
+    }
+  } catch(e) {
+    document.getElementById('pf-progress').innerHTML = `<div class="error">${e.message}</div>`;
+    setLoading('pf-solve', false);
+  }
+}
+
+function renderPushFold(data) {
+  const labels = data.labels;
+  const names = data.hand_names;
+  let html = '';
+  for (const r of data.results) {
+    html += `<div class="pf-section">`;
+    html += `<div class="section-title">Stack: ${r.stack_bb}bb</div>`;
+    html += `<div class="result-meta">`;
+    html += metaItem(t('exploitability'), r.exploitability.toFixed(4) + ' bb');
+    html += `</div>`;
+    html += `<div class="pf-title">${t('sbPush')}</div>`;
+    html += `<div class="pf-stats">${t('range')} ${r.push_range.pct.toFixed(1)}% (${Math.round(r.push_range.combos)}/1326 ${t('combos')})</div>`;
+    html += renderGrid(r.push_range.grid, labels, names, '#238636');
+    html += `<div class="pf-title" style="margin-top:16px;">${t('bbCall')}</div>`;
+    html += `<div class="pf-stats">${t('range')} ${r.call_range.pct.toFixed(1)}% (${Math.round(r.call_range.combos)}/1326 ${t('combos')})</div>`;
+    html += renderGrid(r.call_range.grid, labels, names, '#1f6feb');
+    html += `</div>`;
+  }
+  return html;
+}
+
+function renderGrid(grid, labels, names, baseColor) {
+  let html = '<div class="grid-container"><table class="pf-grid"><tr><th></th>';
+  for (const l of labels) html += `<th>${l}</th>`;
+  html += '</tr>';
+  for (let r = 0; r < 13; r++) {
+    html += `<tr><th>${labels[r]}</th>`;
+    for (let c = 0; c < 13; c++) {
+      const freq = grid[r][c];
+      const pct = (freq * 100).toFixed(0);
+      const name = names[r][c];
+      const fg = freq >= 0.005 ? '#e6edf3' : '#484f58';
+      const tip = `${name}: ${(freq*100).toFixed(1)}%`;
+
+      let barHtml = '';
+      if (freq >= 0.005) {
+        barHtml = `<div class="cell-bar"><div style="width:${(freq*100).toFixed(1)}%;background:${baseColor};"></div></div>`;
+      }
+
+      html += `<td style="background:#0d1117;color:${fg};" title="${tip}">`;
+      html += `<span class="hand-name">${name}</span>`;
+      if (freq >= 0.005) html += `<span style="font-size:10px;">${pct}%</span>`;
+      html += barHtml;
+      html += `</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</table></div>';
+  return html;
+}
+
+// ============================================================
+// Preflop GTO
+// ============================================================
+let pfgJobId = null;
+
+const PFG_DEFENDERS = {
+  UTG: ['BB','HJ','CO','BTN','SB'],
+  HJ:  ['BB','CO','BTN','SB'],
+  CO:  ['BB','BTN','SB'],
+  BTN: ['BB','SB'],
+  SB:  ['BB'],
+};
+
+function onPfgPositionChange() {
+  const posVal = document.getElementById('pfg-position').value;
+  const defSel = document.getElementById('pfg-defender');
+  const curDef = defSel.value;
+
+  let opts = '<option value="BB" selected>vs BB</option>';
+  if (posVal === 'all') {
+    opts += `<option value="all">${t('allDefenders')}</option>`;
+    for (const d of ['HJ','CO','BTN','SB']) {
+      opts += `<option value="${d}">vs ${d}</option>`;
+    }
+  } else {
+    const defs = PFG_DEFENDERS[posVal] || ['BB'];
+    if (defs.length > 1) {
+      opts += `<option value="all">${t('allDefenders')}</option>`;
+      for (const d of defs) {
+        if (d !== 'BB') opts += `<option value="${d}">vs ${d}</option>`;
+      }
+    }
+  }
+  defSel.innerHTML = opts;
+  if ([...defSel.options].some(o => o.value === curDef)) {
+    defSel.value = curDef;
+  }
+}
+
+async function solvePreflopGTO() {
+  const btn = document.getElementById('pfg-solve');
+  btn.disabled = true;
+  btn.textContent = t('solving');
+  document.getElementById('pfg-progress').innerHTML = `<span class="spinner"></span> ${t('solvingPreflop')}`;
+  document.getElementById('pfg-result').innerHTML = '';
+
+  const stack = parseFloat(document.getElementById('pfg-stack').value);
+  const iters = parseInt(document.getElementById('pfg-iter').value);
+  const posVal = document.getElementById('pfg-position').value;
+  const defVal = document.getElementById('pfg-defender').value;
+  const position = posVal === 'all' ? null : posVal;
+  const defender = defVal;
+
+  try {
+    const res = await fetch('/api/preflop/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stack_bb: stack, mc_samples: 2000000, iterations: iters, position, defender, max_raises: parseInt(document.getElementById('pfg-mode').value) }),
+    });
+    const d = await res.json();
+    pfgJobId = d.job_id;
+    startJobTimer(pfgJobId);
+    pollPreflopGTO();
+  } catch (e) {
+    document.getElementById('pfg-progress').innerHTML = `<div class="error">${e.message}</div>`;
+    btn.disabled = false;
+    btn.textContent = t('solve');
+  }
+}
+
+async function pollPreflopGTO() {
+  if (!pfgJobId) return;
+  try {
+    const res = await fetch(`/api/preflop/status/${pfgJobId}`);
+    const d = await res.json();
+    if (d.status === 'running') {
+      document.getElementById('pfg-progress').innerHTML = renderProgressCard(d, pfgJobId);
+      setTimeout(pollPreflopGTO, 500);
+    } else if (d.status === 'completed') {
+      document.getElementById('pfg-progress').innerHTML = '';
+      lastPreflopGTOData = d.result;
+      document.getElementById('pfg-result').innerHTML = renderPreflopGTO(d.result);
+      pfgInitActiveStyles();
+      document.getElementById('pfg-solve').disabled = false;
+      document.getElementById('pfg-solve').textContent = t('solve');
+    } else {
+      document.getElementById('pfg-progress').innerHTML = `<div class="error">${d.error || t('unknownError')}</div>`;
+      document.getElementById('pfg-solve').disabled = false;
+      document.getElementById('pfg-solve').textContent = t('solve');
+    }
+  } catch (e) {
+    document.getElementById('pfg-progress').innerHTML = `<div class="error">${e.message}</div>`;
+    document.getElementById('pfg-solve').disabled = false;
+    document.getElementById('pfg-solve').textContent = t('solve');
+  }
+}
+
+const pfgActionColorMap = {
+  'Fold': '#8b949e', 'Call': '#3fb950', 'Check': '#3fb950',
+  'AllIn': '#a371f7', 'Limp': '#d29922',
+};
+const pfgRaiseColor = '#58a6ff';
+function pfgColor(name) {
+  return pfgActionColorMap[name] || pfgRaiseColor;
+}
+
+let pfgActiveOpener = null;
+let pfgActiveDefender = {};
+
+// Render the overview grid: all actions stacked per cell
+function renderOverviewGrid(dp, labels, names, highlightIdx) {
+  const actions = dp.actions;
+  const hasHighlight = typeof highlightIdx === 'number' && highlightIdx >= 0;
+  let html = '<div class="grid-container"><table class="pf-grid overview-grid"><tr><th></th>';
+  for (const l of labels) html += `<th>${l}</th>`;
+  html += '</tr>';
+  for (let r = 0; r < 13; r++) {
+    html += `<tr><th>${labels[r]}</th>`;
+    for (let c = 0; c < 13; c++) {
+      const name = names[r][c];
+      let segments = [];
+      let total = 0;
+      for (let ai = 0; ai < actions.length; ai++) {
+        const freq = actions[ai].grid[r][c];
+        total += freq;
+        if (freq > 0.005) {
+          segments.push({ ai, freq, color: pfgColor(actions[ai].name), name: actions[ai].name });
+        }
+      }
+
+      // Tooltip
+      let tip = name + ':';
+      for (const s of segments) {
+        tip += `\n${s.name}: ${(s.freq*100).toFixed(1)}%`;
+      }
+
+      // Determine dominant color for background tint
+      let dominantColor = '#0d1117';
+      if (hasHighlight) {
+        dominantColor = pfgColor(actions[highlightIdx].name);
+      } else {
+        let maxFreq = 0;
+        for (const s of segments) {
+          if (s.freq > maxFreq) { maxFreq = s.freq; dominantColor = s.color; }
+        }
+      }
+
+      const bgAlpha = segments.length > 0 ? 0.15 : 0;
+      const bg = bgAlpha > 0 ? hexToRgba(dominantColor, bgAlpha) : '#0d1117';
+      const fg = segments.length > 0 ? '#e6edf3' : '#484f58';
+
+      // Stacked bar — dim non-highlighted actions, reversed order (AllIn left, Fold right)
+      let barHtml = '';
+      if (segments.length > 0 && total > 0.01) {
+        barHtml = '<div class="cell-bar">';
+        for (let si = segments.length - 1; si >= 0; si--) {
+          const s = segments[si];
+          const w = (s.freq / total) * 100;
+          const col = hasHighlight && s.ai !== highlightIdx ? '#30363d' : s.color;
+          barHtml += `<div style="width:${w.toFixed(1)}%;background:${col};"></div>`;
+        }
+        barHtml += '</div>';
+      }
+
+      // Show highlighted action's percentage
+      let pctHtml = '';
+      if (hasHighlight) {
+        const hFreq = actions[highlightIdx].grid[r][c];
+        if (hFreq >= 0.005) {
+          pctHtml = `<span style="font-size:9px;opacity:0.8;">${(hFreq*100).toFixed(0)}%</span>`;
+        }
+      }
+
+      html += `<td style="background:${bg};color:${fg};" title="${tip}">`;
+      html += `<span class="cell-name">${name}</span>`;
+      html += pctHtml;
+      html += barHtml;
+      html += '</td>';
+    }
+    html += '</tr>';
+  }
+  html += '</table></div>';
+  return html;
+}
+
+function hexToRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1,3), 16);
+  const g = parseInt(hex.slice(3,5), 16);
+  const b = parseInt(hex.slice(5,7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function renderPreflopGTO(data) {
+  const positions = data.positions;
+  const openerNames = Object.keys(positions);
+  if (openerNames.length === 0) return '<div class="error">No results</div>';
+
+  let html = '<div class="result-meta">';
+  html += metaItem('Stack', `${data.stack_bb}bb`);
+  html += '</div>';
+
+  // Opener tab bar
+  if (openerNames.length > 1) {
+    html += '<div style="display:flex;gap:4px;margin:12px 0 8px;flex-wrap:wrap;">';
+    for (const opener of openerNames) {
+      html += `<button class="btn-sm pfg-opener-btn" data-opener="${opener}" onclick="pfgSwitchOpener('${opener}')" style="min-width:56px;">${opener}</button>`;
+    }
+    html += '</div>';
+  }
+
+  pfgActiveOpener = openerNames[0];
+  pfgActiveDefender = {};
+
+  for (const opener of openerNames) {
+    const defenderMap = positions[opener];
+    const defenderNames = Object.keys(defenderMap);
+    const visO = opener === openerNames[0] ? '' : 'display:none;';
+
+    pfgActiveDefender[opener] = defenderNames[0];
+
+    html += `<div id="pfg-opener-${opener}" style="${visO}">`;
+
+    // Defender sub-tab bar
+    if (defenderNames.length > 1) {
+      html += '<div style="display:flex;gap:4px;margin:8px 0;flex-wrap:wrap;">';
+      for (const def of defenderNames) {
+        const exploit = defenderMap[def].exploitability;
+        html += `<button class="btn-sm pfg-def-btn" data-opener="${opener}" data-def="${def}" onclick="pfgSwitchDefender('${opener}','${def}')" style="min-width:48px;">vs ${def}<br><span style="font-size:10px;opacity:0.7;">${exploit.toFixed(3)}</span></button>`;
+      }
+      html += '</div>';
+    }
+
+    for (const def of defenderNames) {
+      const matchupData = defenderMap[def];
+      const visD = def === defenderNames[0] ? '' : 'display:none;';
+      const matchupId = `pfg-${opener}-${def}`;
+
+      html += `<div id="${matchupId}" style="${visD}">`;
+      html += `<div class="result-meta">`;
+      html += metaItem(t('exploitability'), matchupData.exploitability.toFixed(4) + ' bb');
+      html += `</div>`;
+
+      const dps = matchupData.decision_points;
+      for (let di = 0; di < dps.length; di++) {
+        const dp = dps[di];
+        const dpId = `pfg-${opener}-${def}-dp-${di}`;
+        html += `<div class="pf-section">`;
+        html += `<div class="pf-title">${dp.label}</div>`;
+
+        // Action legend (reversed to match bar order: AllIn left, Fold right)
+        html += '<div class="action-legend">';
+        for (let ai = dp.actions.length - 1; ai >= 0; ai--) {
+          const a = dp.actions[ai];
+          const color = pfgColor(a.name);
+          html += `<span class="legend-item"><span class="legend-dot" style="background:${color};"></span>${a.name} (${a.pct.toFixed(1)}%)</span>`;
+        }
+        html += '</div>';
+
+        // Action buttons: Overview first, then individual actions
+        html += `<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;">`;
+        html += `<button class="btn-sm pfg-act-btn active-action" data-opener="${opener}" data-def="${def}" data-dp="${di}" data-ai="-1" style="border-color:#58a6ff;color:#58a6ff;font-weight:700;" onclick="pfgSwitchAction('${opener}','${def}',${di},-1)">${t('Overview')}</button>`;
+        for (let ai = 0; ai < dp.actions.length; ai++) {
+          const a = dp.actions[ai];
+          const color = pfgColor(a.name);
+          html += `<button class="btn-sm pfg-act-btn" data-opener="${opener}" data-def="${def}" data-dp="${di}" data-ai="${ai}" onclick="pfgSwitchAction('${opener}','${def}',${di},${ai})">${a.name}</button>`;
+        }
+        html += `</div>`;
+
+        // Overview grid (visible by default)
+        html += `<div id="${dpId}-overview">`;
+        html += renderOverviewGrid(dp, data.labels, data.hand_names);
+        html += `</div>`;
+
+        // Individual action grids (hidden by default) — same layout as overview, highlight selected
+        for (let ai = 0; ai < dp.actions.length; ai++) {
+          const a = dp.actions[ai];
+          html += `<div id="${dpId}-a${ai}" style="display:none;">`;
+          html += `<div class="pf-stats">${t('range')} ${a.pct.toFixed(1)}% (${a.combos.toFixed(0)} ${t('combos')})</div>`;
+          html += renderOverviewGrid(dp, data.labels, data.hand_names, ai);
+          html += `</div>`;
+        }
+        html += `</div>`;
+      }
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+
+  return html;
+}
+
+function pfgSwitchOpener(openerName) {
+  if (!lastPreflopGTOData || !lastPreflopGTOData.positions) return;
+  const openerNames = Object.keys(lastPreflopGTOData.positions);
+  for (const o of openerNames) {
+    const el = document.getElementById(`pfg-opener-${o}`);
+    if (el) el.style.display = o === openerName ? '' : 'none';
+  }
+  document.querySelectorAll('.pfg-opener-btn').forEach(btn => {
+    const active = btn.dataset.opener === openerName;
+    btn.style.borderColor = active ? '#58a6ff' : '';
+    btn.style.color = active ? '#58a6ff' : '';
+  });
+  pfgActiveOpener = openerName;
+}
+
+function pfgSwitchDefender(openerName, defenderName) {
+  if (!lastPreflopGTOData || !lastPreflopGTOData.positions) return;
+  const defenderMap = lastPreflopGTOData.positions[openerName];
+  if (!defenderMap) return;
+  const defenderNames = Object.keys(defenderMap);
+  for (const d of defenderNames) {
+    const el = document.getElementById(`pfg-${openerName}-${d}`);
+    if (el) el.style.display = d === defenderName ? '' : 'none';
+  }
+  document.querySelectorAll(`.pfg-def-btn[data-opener="${openerName}"]`).forEach(btn => {
+    const active = btn.dataset.def === defenderName;
+    btn.style.borderColor = active ? '#58a6ff' : '';
+    btn.style.color = active ? '#58a6ff' : '';
+  });
+  pfgActiveDefender[openerName] = defenderName;
+}
+
+function pfgSwitchAction(openerName, defenderName, dpIdx, actionIdx) {
+  const defenderMap = lastPreflopGTOData.positions[openerName];
+  if (!defenderMap) return;
+  const matchupData = defenderMap[defenderName];
+  if (!matchupData) return;
+  const dp = matchupData.decision_points[dpIdx];
+  const dpId = `pfg-${openerName}-${defenderName}-dp-${dpIdx}`;
+
+  // Hide all views
+  const overviewEl = document.getElementById(`${dpId}-overview`);
+  if (overviewEl) overviewEl.style.display = actionIdx === -1 ? '' : 'none';
+  for (let ai = 0; ai < dp.actions.length; ai++) {
+    const el = document.getElementById(`${dpId}-a${ai}`);
+    if (el) el.style.display = ai === actionIdx ? '' : 'none';
+  }
+
+  // Update button styles
+  const btns = document.querySelectorAll(`.pfg-act-btn[data-opener="${openerName}"][data-def="${defenderName}"][data-dp="${dpIdx}"]`);
+  btns.forEach(btn => {
+    const ai = parseInt(btn.dataset.ai);
+    if (ai === actionIdx) {
+      if (ai === -1) {
+        btn.style.borderColor = '#58a6ff';
+        btn.style.color = '#58a6ff';
+        btn.style.fontWeight = '700';
+      } else {
+        const color = pfgColor(dp.actions[ai].name);
+        btn.style.borderColor = color;
+        btn.style.color = color;
+        btn.style.fontWeight = '700';
+      }
+    } else {
+      btn.style.borderColor = '';
+      btn.style.color = '';
+      btn.style.fontWeight = '';
+    }
+  });
+}
+
+function pfgInitActiveStyles() {
+  if (!lastPreflopGTOData || !lastPreflopGTOData.positions) return;
+  if (pfgActiveOpener) pfgSwitchOpener(pfgActiveOpener);
+  for (const [opener, def] of Object.entries(pfgActiveDefender)) {
+    pfgSwitchDefender(opener, def);
+  }
+}
+
+// ============================================================
+// Postflop Solver
+// ============================================================
+let pfsOopGrid = null, pfsIpGrid = null;
+let pfsJobId = null;
+
+function initPostflopSolver() {
+  pfsOopGrid = createRangeGrid('pfs-oop-grid-container', () => updatePfsInfo('oop'));
+  pfsIpGrid = createRangeGrid('pfs-ip-grid-container', () => updatePfsInfo('ip'));
+
+  // Load presets into selectors
+  if (presetsData) {
+    populatePfsPresets('pfs-oop-preset');
+    populatePfsPresets('pfs-ip-preset');
+  }
+
+  // Default: select all hands for both ranges
+  pfsOopGrid.selectAll();
+  pfsIpGrid.selectAll();
+  updatePfsInfo('oop');
+  updatePfsInfo('ip');
+}
+
+function populatePfsPresets(selectId) {
+  const sel = document.getElementById(selectId);
+  if (!sel || !presetsData) return;
+  for (const [key, val] of Object.entries(presetsData)) {
+    const name = lang === 'ja' ? val.name_ja : val.name_en;
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  }
+}
+
+function loadPresetToPfs(side) {
+  const sel = document.getElementById(`pfs-${side}-preset`);
+  const gridObj = side === 'oop' ? pfsOopGrid : pfsIpGrid;
+  if (!sel || !gridObj || !sel.value || !presetsData[sel.value]) return;
+  const range = presetsData[sel.value].range;
+  gridObj.setRange(range);
+  updatePfsInfo(side);
+}
+
+function updatePfsInfo(side) {
+  const gridObj = side === 'oop' ? pfsOopGrid : pfsIpGrid;
+  const info = document.getElementById(`pfs-${side}-range-info`);
+  if (!gridObj || !info) return;
+  const range = gridObj.getRange();
+  const combos = range.reduce((sum, v, i) => sum + v * classComboCount(i), 0);
+  const total = 1326;
+  const pct = (combos / total * 100).toFixed(1);
+  info.textContent = `${pct}% (${combos.toFixed(0)} ${t('combos')})`;
+}
+
+function applyBetPreset(inputId, selectId) {
+  const sel = document.getElementById(selectId);
+  const input = document.getElementById(inputId);
+  if (sel.value !== 'custom') {
+    input.value = sel.value;
+  }
+}
+
+function classComboCount(idx) {
+  if (idx < 13) return 6; // pairs
+  if (idx < 91) return 4; // suited
+  return 12; // offsuit
+}
+
+async function startPostflopSolve() {
+  const btn = document.getElementById('pfs-solve-btn');
+  const progressDiv = document.getElementById('pfs-progress');
+  const resultDiv = document.getElementById('pfs-result');
+  btn.disabled = true;
+  btn.textContent = t('solving');
+  resultDiv.innerHTML = '';
+
+  const flopStr = document.getElementById('pfs-flop').value.trim();
+  const flopCards = flopStr.split(/\s+/).filter(s => s.length > 0);
+  if (flopCards.length !== 3) {
+    progressDiv.innerHTML = `<div class="error">Flop must have exactly 3 cards (e.g. Ts 7h 2c)</div>`;
+    btn.disabled = false;
+    btn.textContent = t('solve');
+    return;
+  }
+
+  const pot = parseInt(document.getElementById('pfs-pot').value) || 100;
+  const stack = parseInt(document.getElementById('pfs-stack').value) || 200;
+  const maxRaises = parseInt(document.getElementById('pfs-max-raises').value) || 2;
+  const iterations = parseInt(document.getElementById('pfs-iterations').value) || 5000;
+
+  const oopBetStr = document.getElementById('pfs-oop-bet').value;
+  const ipBetStr = document.getElementById('pfs-ip-bet').value;
+  const parseSizes = s => s.split(',').map(x => parseInt(x.trim())).filter(x => x > 0);
+  const oopBets = parseSizes(oopBetStr);
+  const ipBets = parseSizes(ipBetStr);
+
+  const oopRange = pfsOopGrid.getRange();
+  const ipRange = pfsIpGrid.getRange();
+
+  try {
+    const res = await fetch('/api/postflop-solve/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        flop: flopCards,
+        pot, effective_stack: stack,
+        oop_range: oopRange, ip_range: ipRange,
+        oop_bet_sizes: [oopBets, oopBets, oopBets],
+        ip_bet_sizes: [ipBets, ipBets, ipBets],
+        max_raises: maxRaises,
+        iterations,
+      }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    pfsJobId = data.job_id;
+    pollPfsStatus();
+  } catch (e) {
+    progressDiv.innerHTML = `<div class="error">${e.message}</div>`;
+    btn.disabled = false;
+    btn.textContent = t('solve');
+  }
+}
+
+function pollPfsStatus() {
+  if (!pfsJobId) return;
+  const progressDiv = document.getElementById('pfs-progress');
+  const resultDiv = document.getElementById('pfs-result');
+  const btn = document.getElementById('pfs-solve-btn');
+
+  fetch(`/api/postflop-solve/status/${pfsJobId}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.status === 'running') {
+        progressDiv.innerHTML = renderProgressCard(data, pfsJobId);
+        setTimeout(pollPfsStatus, 500);
+      } else if (data.status === 'completed') {
+        progressDiv.innerHTML = '';
+        btn.disabled = false;
+        btn.textContent = t('solve');
+        renderPfsResult(data.result);
+      } else if (data.status === 'failed') {
+        progressDiv.innerHTML = `<div class="error">${data.error || t('unknownError')}</div>`;
+        btn.disabled = false;
+        btn.textContent = t('solve');
+      }
+    })
+    .catch(e => {
+      progressDiv.innerHTML = `<div class="error">${e.message}</div>`;
+      btn.disabled = false;
+      btn.textContent = t('solve');
+    });
+}
+
+// --- Postflop Hand Navigator ---
+let pfsNav = {
+  byKey: {},          // strategies indexed by key
+  actionHistory: [],  // [{action:'x', code:'x'}, {action:'Bet 33', code:'b33'}, ...]
+  streetBreaks: [],   // indices in actionHistory where new streets start
+  targetDiv: 'pfs-result',
+  result: null,
+};
+
+function renderPfsResult(result, targetId) {
+  pfsNav.targetDiv = targetId || 'pfs-result';
+  pfsNav.result = result;
+  pfsNav.actionHistory = [];
+  pfsNav.streetBreaks = [0]; // flop starts at 0
+
+  const div = document.getElementById(pfsNav.targetDiv);
+  let html = '';
+
+  // Meta info
+  html += `<div class="result-meta">`;
+  html += metaItem('Flop', result.flop ? result.flop.join(' ') : '');
+  html += metaItem(t('iterations'), result.iterations?.toLocaleString() || '');
+  html += metaItem(t('infoSets'), result.num_info_sets?.toLocaleString() || '');
+  html += `</div>`;
+
+  if (!result.strategies || result.strategies.length === 0) {
+    html += `<div style="color:#8b949e;">No strategy data available.</div>`;
+    div.innerHTML = html;
+    return;
+  }
+
+  // Index all strategies by key
+  pfsNav.byKey = {};
+  for (const s of result.strategies) {
+    if (s.key && typeof s.key === 'string') {
+      pfsNav.byKey[s.key] = s;
+    }
+  }
+
+  html += `<div id="pfs-hand-nav"></div>`;
+  div.innerHTML = html;
+
+  pfsRenderHandState();
+}
+
+// Build the current key suffix from action history
+function pfsBuildCurrentKey() {
+  const streets = ['F', 'T', 'R'];
+  let key = '';
+  let si = 0; // street index
+  const breaks = [...pfsNav.streetBreaks];
+
+  for (let si2 = 0; si2 < breaks.length; si2++) {
+    const start = breaks[si2];
+    const end = si2 + 1 < breaks.length ? breaks[si2 + 1] : pfsNav.actionHistory.length;
+    key += '|' + streets[si2];
+    for (let i = start; i < end; i++) {
+      key += pfsNav.actionHistory[i].code;
+    }
+  }
+
+  // If no actions at all, return flop root
+  if (key === '') key = '|F';
+  return key;
+}
+
+// Get current street name
+function pfsCurrentStreet() {
+  const names = ['Flop', 'Turn', 'River'];
+  return names[pfsNav.streetBreaks.length - 1] || 'Flop';
+}
+
+// Who acts? OOP=0 acts first each street, alternating
+function pfsCurrentPlayer() {
+  const streetStart = pfsNav.streetBreaks[pfsNav.streetBreaks.length - 1];
+  const actionsOnStreet = pfsNav.actionHistory.length - streetStart;
+  return actionsOnStreet % 2 === 0 ? 'OOP' : 'IP';
+}
+
+// Format action code to readable
+function pfsActionLabel(code) {
+  if (code === 'x') return 'Check';
+  if (code === 'f') return 'Fold';
+  if (code === 'c') return 'Call';
+  if (code === 'a') return 'AllIn';
+  if (code.startsWith('b')) return 'Bet ' + code.slice(1);
+  if (code.startsWith('r')) return 'Raise ' + code.slice(1);
+  return code;
+}
+
+// Parse action codes from a string like "xb33c"
+function pfsParseActionCodes(s) {
+  const tokens = [];
+  let i = 0;
+  while (i < s.length) {
+    if ('fxca'.includes(s[i])) {
+      tokens.push(s[i]);
+      i++;
+    } else if (s[i] === 'b' || s[i] === 'r') {
+      let j = i + 1;
+      while (j < s.length && s[j] >= '0' && s[j] <= '9') j++;
+      tokens.push(s.slice(i, j));
+      i = j;
+    } else {
+      i++;
+    }
+  }
+  return tokens;
+}
+
+function pfsRenderHandState() {
+  const container = document.getElementById('pfs-hand-nav');
+  if (!container) return;
+
+  const currentKey = pfsBuildCurrentKey();
+  const strat = pfsNav.byKey[currentKey];
+  const street = pfsCurrentStreet();
+  const player = pfsCurrentPlayer();
+
+  let html = '';
+
+  // Action history display
+  html += `<div style="margin-bottom:16px;padding:12px;background:#161b22;border-radius:8px;border:1px solid #30363d;">`;
+  html += `<div style="font-size:13px;color:#8b949e;margin-bottom:8px;">Action History</div>`;
+
+  if (pfsNav.actionHistory.length === 0) {
+    html += `<div style="color:#c9d1d9;font-size:14px;">Flop - ${player} to act</div>`;
+  } else {
+    const streetNames = ['Flop', 'Turn', 'River'];
+    let currentStreetIdx = 0;
+    html += `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">`;
+    for (let i = 0; i < pfsNav.actionHistory.length; i++) {
+      // Check if new street starts here
+      const breakIdx = pfsNav.streetBreaks.indexOf(i);
+      if (breakIdx > 0) {
+        currentStreetIdx = breakIdx;
+        html += `<span style="color:#484f58;margin:0 4px;">|</span>`;
+        html += `<span style="color:#58a6ff;font-weight:600;font-size:12px;">${streetNames[currentStreetIdx]}</span>`;
+      } else if (i === 0) {
+        html += `<span style="color:#58a6ff;font-weight:600;font-size:12px;">${streetNames[0]}</span>`;
+      }
+      const a = pfsNav.actionHistory[i];
+      const streetStart = pfsNav.streetBreaks[currentStreetIdx];
+      const actorIdx = (i - streetStart) % 2;
+      const actor = actorIdx === 0 ? 'OOP' : 'IP';
+      const color = actorIdx === 0 ? '#f0883e' : '#3fb950';
+      html += `<span style="color:${color};font-size:13px;">${actor}:${pfsActionLabel(a.code)}</span>`;
+    }
+    html += `</div>`;
+    html += `<div style="margin-top:8px;color:#c9d1d9;font-size:14px;">${street} - <strong>${player}</strong> to act</div>`;
+  }
+
+  // Undo button
+  if (pfsNav.actionHistory.length > 0) {
+    html += `<button class="btn-sm" onclick="pfsUndo()" style="margin-top:8px;">Undo</button>`;
+    html += ` <button class="btn-sm" onclick="pfsReset()" style="margin-top:8px;">Reset</button>`;
+  }
+  html += `</div>`;
+
+  // Strategy display for current decision point
+  if (strat) {
+    html += `<div style="margin-bottom:16px;">`;
+    html += `<div class="section-title" style="margin-bottom:4px;">${player} GTO Strategy - ${street}</div>`;
+
+    if (strat.actions && strat.actions.length > 0 && strat.grids && strat.grids.length > 0) {
+      const colors = ['#8b949e','#3fb950','#58a6ff','#d29922','#f0883e','#da3633'];
+
+      // Compute average frequency for each action across all grid cells
+      const avgFreqs = strat.actions.map((_, ai) => {
+        const grid = strat.grids[ai];
+        if (!grid) return 0;
+        let total = 0, count = 0;
+        for (let r = 0; r < 13; r++) {
+          for (let c = 0; c < 13; c++) {
+            if (grid[r][c] > 0) { total += grid[r][c]; count++; }
+          }
+        }
+        return count > 0 ? total / count : 0;
+      });
+
+      // Action buttons with frequencies (click to advance)
+      html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">`;
+      strat.actions.forEach((a, ai) => {
+        const pct = (avgFreqs[ai] * 100).toFixed(1);
+        const c = colors[ai % colors.length];
+        const code = pfsActionNameToCode(a);
+        html += `<button class="btn-sm" onclick="pfsChooseAction('${code}')" style="border-color:${c};color:${c};font-size:14px;padding:8px 16px;">`;
+        html += `${a} <span style="opacity:0.7;font-size:12px;">(${pct}%)</span>`;
+        html += `</button>`;
+      });
+      html += `</div>`;
+
+      // 13x13 hand grids per action (directly from API grids)
+      html += `<div style="display:flex;gap:16px;flex-wrap:wrap;">`;
+      strat.actions.forEach((a, ai) => {
+        const c = colors[ai % colors.length];
+        const grid = strat.grids[ai];
+        html += `<div>`;
+        html += `<div style="font-size:13px;font-weight:600;color:${c};margin-bottom:4px;">${a} (${(avgFreqs[ai]*100).toFixed(1)}%)</div>`;
+        html += pfsRenderActionGrid(grid, c);
+        html += `</div>`;
+      });
+      html += `</div>`;
+    }
+    html += `</div>`;
+  } else {
+    // No strategy found for this key - might be terminal or street transition
+    html += `<div style="color:#8b949e;padding:12px;">`;
+    html += `No strategy data for this node (key: <code>${currentKey}</code>). `;
+    html += `This may be a terminal state or unmapped decision point.`;
+    html += `</div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+// Render a 13x13 hand grid for one action directly from a grid array
+// grid[row][col] = frequency (0.0 - 1.0)
+// Grid layout: row 0 = A, row 12 = 2. col 0 = A, col 12 = 2.
+// Above diagonal = suited, diagonal = pairs, below diagonal = offsuit.
+function pfsRenderActionGrid(grid, color) {
+  const RANKS = ['A','K','Q','J','T','9','8','7','6','5','4','3','2'];
+
+  let html = `<table style="border-collapse:collapse;font-size:10px;line-height:1;">`;
+  // Header row
+  html += `<tr><td></td>`;
+  for (const l of RANKS) html += `<td style="text-align:center;padding:1px 2px;color:#8b949e;font-size:9px;">${l}</td>`;
+  html += `</tr>`;
+
+  for (let r = 0; r < 13; r++) {
+    html += `<tr>`;
+    html += `<td style="padding:1px 2px;color:#8b949e;font-size:9px;">${RANKS[r]}</td>`;
+    for (let c = 0; c < 13; c++) {
+      const freq = grid ? (grid[r]?.[c] || 0) : 0;
+
+      let label;
+      if (r === c) {
+        label = RANKS[r] + RANKS[r];
+      } else if (r < c) {
+        label = RANKS[r] + RANKS[c] + 's';
+      } else {
+        label = RANKS[c] + RANKS[r] + 'o';
+      }
+
+      const pct = (freq * 100).toFixed(0);
+      const alpha = 0.1 + freq * 0.9;
+      const bg = freq > 0.001 ? `${color}${Math.round(alpha * 255).toString(16).padStart(2, '0')}` : '#0d1117';
+      const textColor = freq > 0.5 ? '#fff' : '#c9d1d9';
+
+      html += `<td style="width:28px;height:22px;text-align:center;background:${bg};color:${textColor};border:1px solid #21262d;font-size:9px;cursor:default;" title="${label}: ${pct}%">`;
+      html += freq > 0.01 ? `${pct}` : '';
+      html += `</td>`;
+    }
+    html += `</tr>`;
+  }
+  html += `</table>`;
+  return html;
+}
+
+// Convert display action name back to code
+function pfsActionNameToCode(name) {
+  if (name === 'Check') return 'x';
+  if (name === 'Fold') return 'f';
+  if (name === 'Call') return 'c';
+  if (name === 'AllIn') return 'a';
+  const bm = name.match(/^Bet\s*(\d+)$/);
+  if (bm) return 'b' + bm[1];
+  const rm = name.match(/^Raise\s*(\d+)$/);
+  if (rm) return 'r' + rm[1];
+  // Fallback for old A0/A1 style names
+  return name.toLowerCase().replace(/\s/g, '');
+}
+
+function pfsChooseAction(code) {
+  pfsNav.actionHistory.push({ code });
+
+  // Determine if this action causes a street transition or terminal
+  // Terminal: fold
+  if (code === 'f') {
+    pfsRenderHandState(); // will show "no strategy" = hand over
+    // Show terminal message instead
+    pfsRenderTerminal('Fold');
+    return;
+  }
+
+  // Call after bet/raise → street advances (or showdown on river)
+  if (code === 'c') {
+    const streetStart = pfsNav.streetBreaks[pfsNav.streetBreaks.length - 1];
+    const streetIdx = pfsNav.streetBreaks.length - 1;
+    // Call ends the action on this street → advance
+    if (streetIdx >= 2) {
+      // River call → showdown
+      pfsRenderTerminal('Showdown');
+      return;
+    }
+    pfsNav.streetBreaks.push(pfsNav.actionHistory.length);
+    pfsRenderHandState();
+    return;
+  }
+
+  // Check-check → street advances
+  if (code === 'x') {
+    const streetStart = pfsNav.streetBreaks[pfsNav.streetBreaks.length - 1];
+    const actionsOnStreet = pfsNav.actionHistory.length - streetStart;
+    if (actionsOnStreet >= 2) {
+      // Both players checked → advance street
+      const streetIdx = pfsNav.streetBreaks.length - 1;
+      if (streetIdx >= 2) {
+        pfsRenderTerminal('Showdown');
+        return;
+      }
+      pfsNav.streetBreaks.push(pfsNav.actionHistory.length);
+    }
+    pfsRenderHandState();
+    return;
+  }
+
+  // AllIn as a "call" equivalent (when facing bet, allin ≤ facing amount)
+  // For simplicity, AllIn after a bet = ends street like Call
+  // AllIn as aggression = opponent still needs to act
+  // We'll let the strategy lookup handle it - if there's no strategy at next node, it's terminal
+
+  pfsRenderHandState();
+}
+
+function pfsRenderTerminal(reason) {
+  const container = document.getElementById('pfs-hand-nav');
+  if (!container) return;
+
+  // Re-render the full state first
+  const currentKey = pfsBuildCurrentKey();
+  const street = pfsCurrentStreet();
+
+  let html = '';
+
+  // Action history
+  html += `<div style="margin-bottom:16px;padding:12px;background:#161b22;border-radius:8px;border:1px solid #30363d;">`;
+  html += `<div style="font-size:13px;color:#8b949e;margin-bottom:8px;">Action History</div>`;
+  const streetNames = ['Flop', 'Turn', 'River'];
+  let currentStreetIdx = 0;
+  html += `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">`;
+  for (let i = 0; i < pfsNav.actionHistory.length; i++) {
+    const breakIdx = pfsNav.streetBreaks.indexOf(i);
+    if (breakIdx > 0) {
+      currentStreetIdx = breakIdx;
+      html += `<span style="color:#484f58;margin:0 4px;">|</span>`;
+      html += `<span style="color:#58a6ff;font-weight:600;font-size:12px;">${streetNames[currentStreetIdx]}</span>`;
+    } else if (i === 0) {
+      html += `<span style="color:#58a6ff;font-weight:600;font-size:12px;">${streetNames[0]}</span>`;
+    }
+    const a = pfsNav.actionHistory[i];
+    const streetStart = pfsNav.streetBreaks[currentStreetIdx];
+    const actorIdx = (i - streetStart) % 2;
+    const actor = actorIdx === 0 ? 'OOP' : 'IP';
+    const color = actorIdx === 0 ? '#f0883e' : '#3fb950';
+    html += `<span style="color:${color};font-size:13px;">${actor}:${pfsActionLabel(a.code)}</span>`;
+  }
+  html += `</div>`;
+  html += `<div style="margin-top:12px;padding:8px 12px;background:#0d1117;border-radius:6px;border:1px solid #30363d;">`;
+  html += `<span style="font-size:16px;font-weight:600;color:#f0883e;">${reason}</span>`;
+  html += `</div>`;
+  html += `<div style="margin-top:8px;">`;
+  html += `<button class="btn-sm" onclick="pfsUndo()">Undo</button> `;
+  html += `<button class="btn-sm" onclick="pfsReset()">Reset</button>`;
+  html += `</div>`;
+  html += `</div>`;
+
+  container.innerHTML = html;
+}
+
+function pfsUndo() {
+  if (pfsNav.actionHistory.length === 0) return;
+  pfsNav.actionHistory.pop();
+  // Remove street break if it points past current history
+  while (pfsNav.streetBreaks.length > 1 &&
+         pfsNav.streetBreaks[pfsNav.streetBreaks.length - 1] > pfsNav.actionHistory.length) {
+    pfsNav.streetBreaks.pop();
+  }
+  pfsRenderHandState();
+}
+
+function pfsReset() {
+  pfsNav.actionHistory = [];
+  pfsNav.streetBreaks = [0];
+  pfsRenderHandState();
+}
+
+// ============================================================
+// Shared
+// ============================================================
+function metaItem(label, value) {
+  return `<div class="meta-item"><div class="label">${label}</div><div class="value">${value}</div></div>`;
+}
+
+function renderStratTable(strats) {
+  if (!strats || strats.length === 0) return `<div style="color:#8b949e;font-size:13px;">${t('noData')}</div>`;
+  const actions = strats[0].probs.map(p => p.action);
+  let html = `<table class="strat"><tr><th>${t('infoSet')}</th>`;
+  for (const a of actions) html += `<th>${ta(a)}</th>`;
+  html += '</tr>';
+  for (const s of strats) {
+    html += `<tr><td class="key">${s.key}</td>`;
+    for (const p of s.probs) {
+      const pct = (p.prob * 100).toFixed(1);
+      const color = actionColor(p.action, p.prob);
+      html += `<td><span class="prob-bar" style="background:${color};width:${Math.max(2, p.prob*60)}px;"></span>${pct}%</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</table>';
+  return html;
+}
+
+function actionColor(action, prob) {
+  if (action === 'Fold') return `rgba(139,148,158,${0.3+prob*0.7})`;
+  if (action === 'Check') return `rgba(139,148,158,${0.3+prob*0.7})`;
+  if (action === 'Call') return `rgba(63,185,80,${0.3+prob*0.7})`;
+  if (action === 'Bet' || action === 'Raise') return `rgba(88,166,255,${0.3+prob*0.7})`;
+  return '#8b949e';
+}
+
+// ============================================================
+// Hand Flow
+// ============================================================
+const HF_POS_ORDER = ['SB','BB','UTG','HJ','CO','BTN'];
+const HF_DEFENDERS = {
+  UTG: ['BB','HJ','CO','BTN','SB'],
+  HJ:  ['BB','CO','BTN','SB'],
+  CO:  ['BB','BTN','SB'],
+  BTN: ['BB','SB'],
+  SB:  ['BB'],
+};
+const HF_BLINDS = { SB: 0.5, BB: 1.0, UTG: 0, HJ: 0, CO: 0, BTN: 0 };
+
+let hfState = {
+  phase: 1,        // current phase (1-4)
+  maxPhase: 1,     // highest completed phase
+  opener: 'CO',
+  defender: 'BB',
+  stackBB: 100,
+  preflopData: null,    // raw result from preflop API
+  matchupData: null,    // positions[opener][defender]
+  dps: [],              // decision_points array
+  actionLine: [],       // selected action index per dp
+  actionHistory: '',    // accumulated history string
+  oopPlayer: null,      // position name
+  ipPlayer: null,
+  oopRange: null,       // 169-element array
+  ipRange: null,
+  pot: 0,
+  effStack: 0,
+  terminal: null,       // null | 'fold' | 'allin' | 'flop'
+  pfsJobId: null,
+};
+
+function initHandFlow() {
+  hfOnOpenerChange();
+  hfSetPhase(1);
+}
+
+// --- Phase control ---
+function hfSetPhase(n) {
+  hfState.phase = n;
+  if (n > hfState.maxPhase) hfState.maxPhase = n;
+
+  for (let i = 1; i <= 4; i++) {
+    const phaseEl = document.getElementById(`hf-phase-${i}`);
+    if (phaseEl) phaseEl.style.display = i === n ? '' : 'none';
+
+    const stepEl = document.getElementById(`hf-step-${i}`);
+    if (stepEl) {
+      stepEl.className = 'hf-step';
+      if (i < n || (i <= hfState.maxPhase && i < n)) {
+        stepEl.classList.add('completed', 'clickable');
+        stepEl.onclick = () => hfGoToPhase(i);
+      } else if (i === n) {
+        stepEl.classList.add('active');
+        stepEl.onclick = null;
+      } else {
+        stepEl.onclick = null;
+      }
+    }
+
+    const lineEl = document.getElementById(`hf-line-${i}`);
+    if (lineEl) {
+      lineEl.className = 'hf-step-line' + (i < n ? ' completed' : '');
+    }
+  }
+}
+
+function hfGoToPhase(n) {
+  if (n <= hfState.maxPhase) hfSetPhase(n);
+}
+
+// --- Setup (Phase 1) ---
+function hfOnOpenerChange() {
+  const opener = document.getElementById('hf-opener').value;
+  const defSel = document.getElementById('hf-defender');
+  const defs = HF_DEFENDERS[opener] || ['BB'];
+  let html = '';
+  for (const d of defs) {
+    html += `<option value="${d}"${d === 'BB' ? ' selected' : ''}>${d}</option>`;
+  }
+  defSel.innerHTML = html;
+}
+
+async function hfSolvePreflop() {
+  const btn = document.getElementById('hf-solve-preflop');
+  btn.disabled = true;
+  btn.textContent = t('solving');
+  const prog = document.getElementById('hf-setup-progress');
+  prog.innerHTML = `<span class="spinner"></span> ${t('hfSolvingPreflop')}`;
+
+  const opener = document.getElementById('hf-opener').value;
+  const defender = document.getElementById('hf-defender').value;
+  const stackBB = parseFloat(document.getElementById('hf-stack').value);
+  const iters = parseInt(document.getElementById('hf-iter').value);
+  const maxRaises = parseInt(document.getElementById('hf-mode').value);
+
+  hfState.opener = opener;
+  hfState.defender = defender;
+  hfState.stackBB = stackBB;
+
+  try {
+    const res = await fetch('/api/preflop/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        stack_bb: stackBB,
+        mc_samples: 2000000,
+        iterations: iters,
+        position: opener,
+        defender: defender,
+        max_raises: maxRaises,
+      }),
+    });
+    const d = await res.json();
+    if (d.error) throw new Error(d.error);
+    pfgJobId = d.job_id;
+    startJobTimer(pfgJobId);
+    hfPollPreflop();
+  } catch (e) {
+    prog.innerHTML = `<div class="error">${e.message}</div>`;
+    btn.disabled = false;
+    btn.textContent = t('hfSolvePreflop');
+  }
+}
+
+async function hfPollPreflop() {
+  if (!pfgJobId) return;
+  const prog = document.getElementById('hf-setup-progress');
+  try {
+    const res = await fetch(`/api/preflop/status/${pfgJobId}`);
+    const d = await res.json();
+    if (d.status === 'running') {
+      prog.innerHTML = renderProgressCard(d, pfgJobId);
+      setTimeout(hfPollPreflop, 500);
+    } else if (d.status === 'completed') {
+      prog.innerHTML = '';
+      hfState.preflopData = d.result;
+      lastPreflopGTOData = d.result;
+      const btn = document.getElementById('hf-solve-preflop');
+      btn.disabled = false;
+      btn.textContent = t('hfSolvePreflop');
+      hfEnterPreflopPhase();
+    } else {
+      prog.innerHTML = `<div class="error">${d.error || t('unknownError')}</div>`;
+      const btn = document.getElementById('hf-solve-preflop');
+      btn.disabled = false;
+      btn.textContent = t('hfSolvePreflop');
+    }
+  } catch (e) {
+    prog.innerHTML = `<div class="error">${e.message}</div>`;
+    const btn = document.getElementById('hf-solve-preflop');
+    btn.disabled = false;
+    btn.textContent = t('hfSolvePreflop');
+  }
+}
+
+// --- Preflop (Phase 2) ---
+function hfEnterPreflopPhase() {
+  const data = hfState.preflopData;
+  const opener = hfState.opener;
+  const defender = hfState.defender;
+
+  // Extract matchup data
+  const positions = data.positions;
+  const openerData = positions[opener];
+  if (!openerData) { console.error('No opener data for', opener); return; }
+  const matchup = openerData[defender];
+  if (!matchup) { console.error('No matchup data for', opener, 'vs', defender); return; }
+
+  hfState.matchupData = matchup;
+  hfState.dps = matchup.decision_points || [];
+  hfState.actionLine = [];
+  hfState.actionHistory = '';
+  hfState.terminal = null;
+
+  // Render GTO grids
+  document.getElementById('hf-preflop-gto-result').innerHTML = renderPreflopGTO(data);
+  pfgInitActiveStyles();
+
+  // Build action line
+  hfBuildActionLine();
+
+  hfSetPhase(2);
+}
+
+function hfActionToHistorySuffix(actionName) {
+  if (actionName === 'Fold') return 'f';
+  if (actionName === 'Call') return 'c';
+  if (actionName === 'Check') return 'x';
+  if (actionName === 'AllIn') return 'a';
+  if (actionName === 'Limp') return 'c';
+  const m = actionName.match(/\((\d+(?:\.\d+)?)bb\)/);
+  if (m) return 'r' + Math.round(parseFloat(m[1]) * 10);
+  return 'c';
+}
+
+function hfFindDpByHistory(history) {
+  for (const dp of hfState.dps) {
+    if (dp.history === history) return dp;
+  }
+  return null;
+}
+
+function hfBuildActionLine() {
+  const container = document.getElementById('hf-action-line');
+  const opener = hfState.opener;
+  const defender = hfState.defender;
+  const dps = hfState.dps;
+
+  if (dps.length === 0) {
+    container.innerHTML = '<div style="color:#8b949e;">No decision points available.</div>';
+    document.getElementById('hf-deal-flop').disabled = true;
+    return;
+  }
+
+  let html = '';
+  let currentHistory = '';
+  let dpIdx = 0;
+  let selectedActions = [];
+  let terminal = null;
+
+  // Walk through dps using history matching
+  // First dp: try history="" or fall back to index 0
+  let currentDp = hfFindDpByHistory('') || dps[0];
+
+  while (currentDp) {
+    const isOpenerTurn = dpIdx % 2 === 0;
+    const posLabel = isOpenerTurn ? opener : defender;
+
+    if (dpIdx > 0) {
+      html += '<span class="hf-al-arrow">→</span>';
+    }
+
+    html += `<span class="hf-al-label">${posLabel}:</span>`;
+    html += `<select onchange="hfOnActionChange(${dpIdx})" id="hf-al-sel-${dpIdx}">`;
+    html += `<option value="">--</option>`;
+    for (let ai = 0; ai < currentDp.actions.length; ai++) {
+      const a = currentDp.actions[ai];
+      const selected = dpIdx < hfState.actionLine.length && hfState.actionLine[dpIdx] === ai ? ' selected' : '';
+      html += `<option value="${ai}"${selected}>${a.name} (${a.pct.toFixed(1)}%)</option>`;
+    }
+    html += `</select>`;
+
+    // Check if user has selected an action at this dp
+    if (dpIdx < hfState.actionLine.length) {
+      const selIdx = hfState.actionLine[dpIdx];
+      const selAction = currentDp.actions[selIdx];
+      const suffix = hfActionToHistorySuffix(selAction.name);
+      currentHistory += suffix;
+
+      if (selAction.name === 'Fold') {
+        terminal = 'fold';
+        dpIdx++;
+        break;
+      } else if (selAction.name === 'Call' || selAction.name === 'Check') {
+        // Check if there's a next dp (more action). If not, go to flop.
+        const nextDp = hfFindDpByHistory(currentHistory);
+        if (nextDp) {
+          currentDp = nextDp;
+          dpIdx++;
+          continue;
+        } else {
+          terminal = 'flop';
+          dpIdx++;
+          break;
+        }
+      } else if (selAction.name === 'AllIn') {
+        // Need opponent's response
+        const nextDp = hfFindDpByHistory(currentHistory);
+        if (nextDp) {
+          currentDp = nextDp;
+          dpIdx++;
+          continue;
+        } else {
+          terminal = 'allin';
+          dpIdx++;
+          break;
+        }
+      } else if (selAction.name === 'Limp') {
+        // After limp, defender gets to act
+        const nextDp = hfFindDpByHistory(currentHistory);
+        if (nextDp) {
+          currentDp = nextDp;
+          dpIdx++;
+          continue;
+        } else {
+          terminal = 'flop';
+          dpIdx++;
+          break;
+        }
+      } else {
+        // Raise/Open - find next dp
+        const nextDp = hfFindDpByHistory(currentHistory);
+        if (nextDp) {
+          currentDp = nextDp;
+          dpIdx++;
+          continue;
+        } else {
+          // No more dps - terminal
+          terminal = 'flop';
+          dpIdx++;
+          break;
+        }
+      }
+    } else {
+      // No selection yet at this dp
+      dpIdx++;
+      break;
+    }
+  }
+
+  // Show terminal status
+  if (terminal === 'fold') {
+    html += `<span class="hf-al-arrow">→</span>`;
+    html += `<span class="hf-al-terminal">${t('hfHandEnd')}</span>`;
+  } else if (terminal === 'allin') {
+    html += `<span class="hf-al-arrow">→</span>`;
+    html += `<span class="hf-al-terminal">${t('hfAllInNoPostflop')}</span>`;
+  }
+
+  container.innerHTML = html;
+  hfState.terminal = terminal;
+  hfState.actionHistory = currentHistory;
+
+  // Update derived ranges and deal flop button
+  if (hfState.actionLine.length > 0) {
+    hfDeriveRanges();
+    hfDerivePotAndStack();
+    hfRenderDerivedRanges();
+  } else {
+    document.getElementById('hf-derived-ranges').innerHTML = '';
+  }
+
+  const dealBtn = document.getElementById('hf-deal-flop');
+  dealBtn.disabled = terminal !== 'flop';
+  dealBtn.textContent = t('hfDealFlop');
+}
+
+function hfOnActionChange(dpIdx) {
+  const sel = document.getElementById(`hf-al-sel-${dpIdx}`);
+  const val = sel.value;
+
+  if (val === '') {
+    // Clear from this point forward
+    hfState.actionLine = hfState.actionLine.slice(0, dpIdx);
+  } else {
+    hfState.actionLine = hfState.actionLine.slice(0, dpIdx);
+    hfState.actionLine.push(parseInt(val));
+  }
+
+  hfBuildActionLine();
+}
+
+// --- Range derivation ---
+function hfDeriveRanges() {
+  const openerGrid = Array.from({length:13}, () => new Array(13).fill(1));
+  const defenderGrid = Array.from({length:13}, () => new Array(13).fill(1));
+
+  let history = '';
+  let currentDp = hfFindDpByHistory('') || hfState.dps[0];
+
+  for (let dpIdx = 0; dpIdx < hfState.actionLine.length; dpIdx++) {
+    if (!currentDp) break;
+    const selIdx = hfState.actionLine[dpIdx];
+    const action = currentDp.actions[selIdx];
+    if (!action || !action.grid) break;
+
+    const targetGrid = dpIdx % 2 === 0 ? openerGrid : defenderGrid;
+    for (let r = 0; r < 13; r++) {
+      for (let c = 0; c < 13; c++) {
+        targetGrid[r][c] *= action.grid[r][c];
+      }
+    }
+
+    const suffix = hfActionToHistorySuffix(action.name);
+    history += suffix;
+    currentDp = hfFindDpByHistory(history);
+  }
+
+  // Determine OOP/IP
+  const openerOrd = HF_POS_ORDER.indexOf(hfState.opener);
+  const defenderOrd = HF_POS_ORDER.indexOf(hfState.defender);
+  // Lower index in postflop order acts first = OOP
+  if (defenderOrd < openerOrd) {
+    hfState.oopPlayer = hfState.defender;
+    hfState.ipPlayer = hfState.opener;
+    hfState.oopRange = gridToRange(defenderGrid);
+    hfState.ipRange = gridToRange(openerGrid);
+  } else {
+    hfState.oopPlayer = hfState.opener;
+    hfState.ipPlayer = hfState.defender;
+    hfState.oopRange = gridToRange(openerGrid);
+    hfState.ipRange = gridToRange(defenderGrid);
+  }
+}
+
+function hfDerivePotAndStack() {
+  const opener = hfState.opener;
+  const defender = hfState.defender;
+  let openerInvested = HF_BLINDS[opener] || 0;
+  let defenderInvested = HF_BLINDS[defender] || 0;
+
+  let history = '';
+  let currentDp = hfFindDpByHistory('') || hfState.dps[0];
+
+  for (let dpIdx = 0; dpIdx < hfState.actionLine.length; dpIdx++) {
+    if (!currentDp) break;
+    const selIdx = hfState.actionLine[dpIdx];
+    const action = currentDp.actions[selIdx];
+    if (!action) break;
+    const isOpenerTurn = dpIdx % 2 === 0;
+
+    const amount = hfParseActionAmount(action.name);
+
+    if (action.name === 'Fold') {
+      break;
+    } else if (action.name === 'Call') {
+      if (isOpenerTurn) openerInvested = defenderInvested;
+      else defenderInvested = openerInvested;
+    } else if (action.name === 'Check') {
+      // No change
+    } else if (action.name === 'Limp') {
+      if (isOpenerTurn) openerInvested = 1.0; // complete to BB
+      else defenderInvested = 1.0;
+    } else if (action.name === 'AllIn') {
+      if (isOpenerTurn) openerInvested = hfState.stackBB;
+      else defenderInvested = hfState.stackBB;
+    } else if (amount > 0) {
+      // Raise/Open with specific amount
+      if (isOpenerTurn) openerInvested = amount;
+      else defenderInvested = amount;
+    }
+
+    const suffix = hfActionToHistorySuffix(action.name);
+    history += suffix;
+    currentDp = hfFindDpByHistory(history);
+  }
+
+  const deadMoney = 1.5 - (HF_BLINDS[opener] || 0) - (HF_BLINDS[defender] || 0);
+  hfState.pot = openerInvested + defenderInvested + deadMoney;
+  hfState.effStack = hfState.stackBB - Math.max(openerInvested, defenderInvested);
+}
+
+function hfParseActionAmount(name) {
+  const m = name.match(/\((\d+(?:\.\d+)?)bb\)/);
+  if (m) return parseFloat(m[1]);
+  return 0;
+}
+
+function hfRenderDerivedRanges() {
+  const container = document.getElementById('hf-derived-ranges');
+  if (!hfState.oopRange || !hfState.ipRange) {
+    container.innerHTML = '';
+    return;
+  }
+
+  const oopStats = rangeStats(hfState.oopRange);
+  const ipStats = rangeStats(hfState.ipRange);
+  const oopGrid = rangeToGrid(hfState.oopRange);
+  const ipGrid = rangeToGrid(hfState.ipRange);
+
+  let html = '<div class="hf-derived">';
+
+  // OOP panel
+  html += '<div class="hf-derived-panel">';
+  html += `<h4>${t('hfOOPPlayer')} (${hfState.oopPlayer})</h4>`;
+  html += `<div class="hf-range-stats">${oopStats.pct.toFixed(1)}% (${Math.round(oopStats.combos)} ${t('combos')})</div>`;
+  html += renderGrid(oopGrid, LABELS, HAND_NAMES, '#1f6feb');
+  html += '</div>';
+
+  // IP panel
+  html += '<div class="hf-derived-panel">';
+  html += `<h4>${t('hfIPPlayer')} (${hfState.ipPlayer})</h4>`;
+  html += `<div class="hf-range-stats">${ipStats.pct.toFixed(1)}% (${Math.round(ipStats.combos)} ${t('combos')})</div>`;
+  html += renderGrid(ipGrid, LABELS, HAND_NAMES, '#238636');
+  html += '</div>';
+
+  html += '</div>';
+
+  // Pot and stack info
+  if (hfState.terminal === 'flop') {
+    html += `<div class="hf-context-bar" style="margin-top:12px;">`;
+    html += `${t('hfPot')}: <span>${hfState.pot.toFixed(1)}bb</span>`;
+    html += `${t('hfEffStack')}: <span>${hfState.effStack.toFixed(1)}bb</span>`;
+    html += `</div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+// --- Card Picker ---
+const CP_RANKS = ['A','K','Q','J','T','9','8','7','6','5','4','3','2'];
+const CP_SUITS = [
+  { key: 's', symbol: '♠', cls: 'cp-suit-s' },
+  { key: 'h', symbol: '♥', cls: 'cp-suit-h' },
+  { key: 'd', symbol: '♦', cls: 'cp-suit-d' },
+  { key: 'c', symbol: '♣', cls: 'cp-suit-c' },
+];
+
+let cpSelected = []; // array of card strings, e.g. ['Ts','7h','2c']
+const CP_MAX = 5;    // flop 3 + turn 1 + river 1
+
+function cpRenderPicker() {
+  const container = document.getElementById('hf-card-picker');
+  if (!container) return;
+
+  // Selected cards display
+  let html = '<div class="card-picker-selected">';
+  const slotLabels = ['Flop','Flop','Flop','Turn','River'];
+  for (let i = 0; i < CP_MAX; i++) {
+    if (i === 3) html += '<span style="color:#30363d;font-size:16px;margin:0 4px;">|</span>';
+    if (i < cpSelected.length) {
+      const card = cpSelected[i];
+      const rank = card[0];
+      const suit = card[1];
+      const suitInfo = CP_SUITS.find(s => s.key === suit);
+      html += `<div class="card-picker-slot filled" onclick="cpRemoveCard(${i})" title="Click to remove">`;
+      html += `<div class="cp-card ${suitInfo.cls}"><span class="cp-rank">${rank}</span><span class="cp-suit">${suitInfo.symbol}</span></div>`;
+      html += `</div>`;
+    } else {
+      const lbl = i < 3 ? '' : (i === 3 ? 'T' : 'R');
+      const borderStyle = i < 3 ? '' : 'border-color:#21262d;';
+      html += `<div class="card-picker-slot" style="${borderStyle}"><span style="font-size:10px;">${lbl}</span></div>`;
+    }
+  }
+  if (cpSelected.length > 0) {
+    html += `<button class="btn-sm cp-clear-btn" onclick="cpClear()" style="margin-left:8px;">Clear</button>`;
+  }
+  html += '</div>';
+
+  // Card grid (4 suit rows × 13 ranks)
+  for (const suit of CP_SUITS) {
+    html += '<div class="card-picker-grid card-picker-suit-row">';
+    for (const rank of CP_RANKS) {
+      const card = rank + suit.key;
+      const isSelected = cpSelected.includes(card);
+      const isDisabled = !isSelected && cpSelected.length >= CP_MAX;
+      let cls = 'cp-btn ' + suit.cls;
+      if (isSelected) cls += ' cp-selected';
+      if (isDisabled) cls += ' cp-disabled';
+      html += `<button class="${cls}" data-card="${card}" onclick="cpToggleCard('${card}')">`;
+      html += `<span style="font-size:13px;font-weight:700;">${rank}</span>`;
+      html += `<span style="font-size:14px;">${suit.symbol}</span>`;
+      html += `</button>`;
+    }
+    html += '</div>';
+  }
+
+  container.innerHTML = html;
+
+  // Update hidden input
+  document.getElementById('hf-board').value = cpSelected.join(' ');
+}
+
+function cpToggleCard(card) {
+  const idx = cpSelected.indexOf(card);
+  if (idx >= 0) {
+    cpSelected.splice(idx, 1);
+  } else {
+    if (cpSelected.length >= CP_MAX) return;
+    cpSelected.push(card);
+  }
+  cpRenderPicker();
+}
+
+function cpRemoveCard(idx) {
+  cpSelected.splice(idx, 1);
+  cpRenderPicker();
+}
+
+function cpClear() {
+  cpSelected = [];
+  cpRenderPicker();
+}
+
+// --- Flop (Phase 3) ---
+function hfProceedToFlop() {
+  if (hfState.terminal !== 'flop') return;
+
+  // Show context bar
+  const ctx = document.getElementById('hf-flop-context');
+  ctx.innerHTML = `${hfState.opener} vs ${hfState.defender} | ` +
+    `${t('hfPot')}: <span>${hfState.pot.toFixed(1)}bb</span> | ` +
+    `${t('hfEffStack')}: <span>${hfState.effStack.toFixed(1)}bb</span> | ` +
+    `${t('hfOOPPlayer')}: <span>${hfState.oopPlayer}</span> | ` +
+    `${t('hfIPPlayer')}: <span>${hfState.ipPlayer}</span>`;
+
+  // Show derived ranges (read-only mini grids)
+  const oopGrid = rangeToGrid(hfState.oopRange);
+  const ipGrid = rangeToGrid(hfState.ipRange);
+  const oopStats = rangeStats(hfState.oopRange);
+  const ipStats = rangeStats(hfState.ipRange);
+
+  let rangeHtml = '<div class="hf-derived">';
+  rangeHtml += '<div class="hf-derived-panel">';
+  rangeHtml += `<h4>${t('hfOOPPlayer')} (${hfState.oopPlayer}) — ${oopStats.pct.toFixed(1)}%</h4>`;
+  rangeHtml += renderGrid(oopGrid, LABELS, HAND_NAMES, '#1f6feb');
+  rangeHtml += '</div>';
+  rangeHtml += '<div class="hf-derived-panel">';
+  rangeHtml += `<h4>${t('hfIPPlayer')} (${hfState.ipPlayer}) — ${ipStats.pct.toFixed(1)}%</h4>`;
+  rangeHtml += renderGrid(ipGrid, LABELS, HAND_NAMES, '#238636');
+  rangeHtml += '</div>';
+  rangeHtml += '</div>';
+  document.getElementById('hf-flop-ranges').innerHTML = rangeHtml;
+
+  // Initialize card picker
+  cpSelected = [];
+  cpRenderPicker();
+
+  hfSetPhase(3);
+}
+
+function hfOnBetPreset(side) {
+  const sel = document.getElementById(`hf-${side}-bet-preset`);
+  const input = document.getElementById(`hf-${side}-bet`);
+  if (sel.value === 'custom') {
+    input.style.display = '';
+    input.focus();
+  } else {
+    input.style.display = 'none';
+    input.value = sel.value;
+  }
+}
+
+async function hfSolvePostflop() {
+  const btn = document.getElementById('hf-solve-postflop');
+  const progressDiv = document.getElementById('hf-flop-progress');
+  btn.disabled = true;
+  btn.textContent = t('solving');
+
+  const flopCards = cpSelected.slice(0, 3);
+  if (flopCards.length < 3) {
+    progressDiv.innerHTML = `<div class="error">${t('hfSelectFlop')}</div>`;
+    btn.disabled = false;
+    btn.textContent = t('hfSolvePostflop');
+    return;
+  }
+
+  const pot = Math.round(hfState.pot);
+  const stack = Math.round(hfState.effStack);
+  const maxRaises = parseInt(document.getElementById('hf-max-raises').value) || 2;
+  const iterations = parseInt(document.getElementById('hf-pfs-iter').value) || 2000;
+
+  const oopBetStr = document.getElementById('hf-oop-bet').value;
+  const ipBetStr = document.getElementById('hf-ip-bet').value;
+  const parseSizes = s => s.split(',').map(x => parseInt(x.trim())).filter(x => x > 0);
+  const oopBets = parseSizes(oopBetStr);
+  const ipBets = parseSizes(ipBetStr);
+
+  try {
+    const res = await fetch('/api/postflop-solve/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        flop: flopCards,
+        pot, effective_stack: stack,
+        oop_range: hfState.oopRange,
+        ip_range: hfState.ipRange,
+        oop_bet_sizes: [oopBets, oopBets, oopBets],
+        ip_bet_sizes: [ipBets, ipBets, ipBets],
+        max_raises: maxRaises,
+        iterations,
+      }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    hfState.pfsJobId = data.job_id;
+    startJobTimer(hfState.pfsJobId);
+    hfPollPostflop();
+  } catch (e) {
+    progressDiv.innerHTML = `<div class="error">${e.message}</div>`;
+    btn.disabled = false;
+    btn.textContent = t('hfSolvePostflop');
+  }
+}
+
+function hfPollPostflop() {
+  if (!hfState.pfsJobId) return;
+  const progressDiv = document.getElementById('hf-flop-progress');
+  const btn = document.getElementById('hf-solve-postflop');
+
+  fetch(`/api/postflop-solve/status/${hfState.pfsJobId}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.status === 'running') {
+        progressDiv.innerHTML = renderProgressCard(data, hfState.pfsJobId);
+        setTimeout(hfPollPostflop, 500);
+      } else if (data.status === 'completed') {
+        progressDiv.innerHTML = '';
+        btn.disabled = false;
+        btn.textContent = t('hfSolvePostflop');
+        hfRenderResults(data.result);
+      } else if (data.status === 'failed') {
+        progressDiv.innerHTML = `<div class="error">${data.error || t('unknownError')}</div>`;
+        btn.disabled = false;
+        btn.textContent = t('hfSolvePostflop');
+      }
+    })
+    .catch(e => {
+      progressDiv.innerHTML = `<div class="error">${e.message}</div>`;
+      btn.disabled = false;
+      btn.textContent = t('hfSolvePostflop');
+    });
+}
+
+// --- Results (Phase 4) ---
+function hfRenderResults(result) {
+  // Show context
+  const ctx = document.getElementById('hf-result-context');
+  ctx.innerHTML = `${hfState.opener} vs ${hfState.defender} | ` +
+    `Board: <span>${cpSelected.join(' ')}</span> | ` +
+    `${t('hfPot')}: <span>${hfState.pot.toFixed(1)}bb</span> | ` +
+    `${t('hfEffStack')}: <span>${hfState.effStack.toFixed(1)}bb</span> | ` +
+    `${t('hfOOPPlayer')}: <span>${hfState.oopPlayer}</span> | ` +
+    `${t('hfIPPlayer')}: <span>${hfState.ipPlayer}</span>`;
+
+  renderPfsResult(result, 'hf-result');
+  hfSetPhase(4);
+}
+
+// ============================================================
+// Initialize
+// ============================================================
+setLang(lang);
+loadPresets();
+initRangeEditor();
+initRangeVsRange();
+initPostflop();
+initHandFlow();
+</script>
+</body>
+</html>

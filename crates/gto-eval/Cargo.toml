@@ -1,0 +1,12 @@
+[package]
+name = "gto-eval"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gto-core = { path = "../gto-core" }
+rand = { workspace = true }
+rayon = { workspace = true }
+
+[dev-dependencies]
+rand_chacha = { workspace = true }

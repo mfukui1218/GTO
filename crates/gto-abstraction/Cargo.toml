@@ -1,0 +1,9 @@
+[package]
+name = "gto-abstraction"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gto-core = { path = "../gto-core" }
+gto-eval = { path = "../gto-eval" }
+rand = { workspace = true }
