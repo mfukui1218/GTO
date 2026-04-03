@@ -1,5 +1,5 @@
 use axum::extract::{Path, State};
-use axum::http::{header, StatusCode};
+use axum::http::header;
 use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
@@ -23,7 +23,7 @@ use gto_games::postflop::{
 };
 use gto_games::{KuhnPoker, LeducHoldem};
 
-use super::state::{AppState, JobStatus, PushFoldDataCache};
+use super::state::{ApiError, AppState, JobStatus, PushFoldDataCache};
 
 static INDEX_HTML: &str = include_str!("../../static/index.html");
 
@@ -74,7 +74,7 @@ pub struct KuhnRequest {
 
 pub async fn solve_kuhn(
     Json(req): Json<KuhnRequest>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Value>, ApiError> {
     let result = tokio::task::spawn_blocking(move || {
         let game = KuhnPoker;
         let config = TrainerConfig {
@@ -134,12 +134,7 @@ pub async fn solve_kuhn(
         })
     })
     .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": e.to_string()})),
-        )
-    })?;
+    .map_err(|e| ApiError::internal(e.to_string()))?;
 
     Ok(Json(result))
 }
@@ -154,7 +149,7 @@ pub struct LeducRequest {
 
 pub async fn solve_leduc(
     Json(req): Json<LeducRequest>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Value>, ApiError> {
     let result = tokio::task::spawn_blocking(move || {
         let game = LeducHoldem;
         let config = TrainerConfig {
@@ -232,12 +227,7 @@ pub async fn solve_leduc(
         })
     })
     .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": e.to_string()})),
-        )
-    })?;
+    .map_err(|e| ApiError::internal(e.to_string()))?;
 
     Ok(Json(result))
 }
@@ -254,17 +244,17 @@ pub struct EquityRequest {
 
 pub async fn calc_equity(
     Json(req): Json<EquityRequest>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Value>, ApiError> {
     let hand1_cards: Result<Vec<Card>, String> = req.hand1.iter().map(|s| parse_card(s)).collect();
     let hand2_cards: Result<Vec<Card>, String> = req.hand2.iter().map(|s| parse_card(s)).collect();
     let board_cards: Result<Vec<Card>, String> = req.board.iter().map(|s| parse_card(s)).collect();
 
     let hand1 = hand1_cards
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e}))))?;
+        .map_err(ApiError::bad_request)?;
     let hand2 = hand2_cards
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e}))))?;
+        .map_err(ApiError::bad_request)?;
     let board = board_cards
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e}))))?;
+        .map_err(ApiError::bad_request)?;
 
     // Validate no duplicate cards
     let mut all_cards = vec![];
@@ -274,10 +264,7 @@ pub async fn calc_equity(
     for i in 0..all_cards.len() {
         for j in (i + 1)..all_cards.len() {
             if all_cards[i].0 == all_cards[j].0 {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({"error": "Duplicate cards detected"})),
-                ));
+                return Err(ApiError::bad_request("Duplicate cards detected"));
             }
         }
     }
@@ -305,12 +292,7 @@ pub async fn calc_equity(
         })
     })
     .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": e.to_string()})),
-        )
-    })?;
+    .map_err(|e| ApiError::internal(e.to_string()))?;
 
     Ok(Json(result))
 }
@@ -372,10 +354,10 @@ fn range_stats(freqs: &[f64; NUM_CLASSES]) -> (f64, f64) {
 pub async fn start_pushfold(
     State(state): State<AppState>,
     Json(req): Json<PushFoldRequest>,
-) -> Json<Value> {
+) -> Result<Json<Value>, ApiError> {
     let job_id = uuid::Uuid::new_v4().to_string();
 
-    state.jobs.lock().unwrap().insert(
+    state.jobs.lock()?.insert(
         job_id.clone(),
         JobStatus::Running {
             progress: "Starting...".into(),
@@ -538,24 +520,24 @@ pub async fn start_pushfold(
         }
     });
 
-    Json(json!({
+    Ok(Json(json!({
         "job_id": job_id,
         "status": "running",
-    }))
+    })))
 }
 
 pub async fn pushfold_status(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Value>, ApiError> {
     job_status_response(&state, &job_id)
 }
 
 fn job_status_response(
     state: &AppState,
     job_id: &str,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let jobs = state.jobs.lock().unwrap();
+) -> Result<Json<Value>, ApiError> {
+    let jobs = state.jobs.lock().map_err(|e| ApiError::internal(e.to_string()))?;
     match jobs.get(job_id) {
         Some(JobStatus::Running { progress, pct, current_step, total_steps }) => Ok(Json(json!({
             "job_id": job_id,
@@ -575,10 +557,7 @@ fn job_status_response(
             "status": "failed",
             "error": error,
         }))),
-        None => Err((
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "Job not found"})),
-        )),
+        None => Err(ApiError::not_found("Job not found")),
     }
 }
 
@@ -605,21 +584,18 @@ fn vec_to_169(v: &[f64]) -> Result<[f64; NUM_CLASSES], String> {
 pub async fn calc_range_equity(
     State(state): State<AppState>,
     Json(req): Json<RangeEquityRequest>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Value>, ApiError> {
     let range1 = vec_to_169(&req.range1)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e}))))?;
+        .map_err(ApiError::bad_request)?;
     let range2 = vec_to_169(&req.range2)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e}))))?;
+        .map_err(ApiError::bad_request)?;
 
     let board_cards: Result<Vec<Card>, String> = req.board.iter().map(|s| parse_card(s)).collect();
     let board = board_cards
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e}))))?;
+        .map_err(ApiError::bad_request)?;
 
     if !board.is_empty() && board.len() != 3 && board.len() != 4 && board.len() != 5 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "Board must have 0, 3, 4, or 5 cards"})),
-        ));
+        return Err(ApiError::bad_request("Board must have 0, 3, 4, or 5 cards"));
     }
 
     // If preflop (no board), use async job pattern
@@ -632,7 +608,7 @@ pub async fn calc_range_equity(
         build_range_equity_json(&res, &range1, &range2)
     })
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    .map_err(|e| ApiError::internal(e.to_string()))?;
 
     Ok(Json(result))
 }
@@ -695,9 +671,9 @@ fn start_range_equity_job(
     range1: [f64; NUM_CLASSES],
     range2: [f64; NUM_CLASSES],
     mc_samples: usize,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Value>, ApiError> {
     let job_id = uuid::Uuid::new_v4().to_string();
-    state.jobs.lock().unwrap().insert(
+    state.jobs.lock().map_err(|e| ApiError::internal(e.to_string()))?.insert(
         job_id.clone(),
         JobStatus::Running {
             progress: "Computing range vs range equity (preflop MC)...".into(),
@@ -730,7 +706,7 @@ fn start_range_equity_job(
 pub async fn range_equity_status(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Value>, ApiError> {
     job_status_response(&state, &job_id)
 }
 
@@ -748,18 +724,18 @@ pub struct PostflopReviewRequest {
 
 pub async fn calc_postflop_review(
     Json(req): Json<PostflopReviewRequest>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Value>, ApiError> {
     let hero: Result<Vec<Card>, String> = req.hero_hand.iter().map(|s| parse_card(s)).collect();
-    let hero = hero.map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e}))))?;
+    let hero = hero.map_err(ApiError::bad_request)?;
     let board: Result<Vec<Card>, String> = req.board.iter().map(|s| parse_card(s)).collect();
-    let board = board.map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e}))))?;
+    let board = board.map_err(ApiError::bad_request)?;
 
     if board.len() < 3 || board.len() > 5 {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({"error": "Board must have 3-5 cards"}))));
+        return Err(ApiError::bad_request("Board must have 3-5 cards"));
     }
 
     let villain_range = vec_to_169(&req.villain_range)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e}))))?;
+        .map_err(ApiError::bad_request)?;
 
     let pot = req.pot;
     let eff_stack = req.effective_stack;
@@ -879,7 +855,7 @@ pub async fn calc_postflop_review(
         })
     })
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    .map_err(|e| ApiError::internal(e.to_string()))?;
 
     Ok(Json(result))
 }
@@ -986,10 +962,10 @@ fn solve_single_matchup<F: FnMut(usize, usize)>(
 pub async fn start_preflop(
     State(state): State<AppState>,
     Json(req): Json<PreflopRequest>,
-) -> Json<Value> {
+) -> Result<Json<Value>, ApiError> {
     let job_id = uuid::Uuid::new_v4().to_string();
 
-    state.jobs.lock().unwrap().insert(
+    state.jobs.lock()?.insert(
         job_id.clone(),
         JobStatus::Running {
             progress: "Starting...".into(),
@@ -1159,16 +1135,16 @@ pub async fn start_preflop(
         }
     });
 
-    Json(json!({
+    Ok(Json(json!({
         "job_id": job_id,
         "status": "running",
-    }))
+    })))
 }
 
 pub async fn preflop_status(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Value>, ApiError> {
     job_status_response(&state, &job_id)
 }
 
@@ -1312,19 +1288,19 @@ pub struct PostflopSolveRequest {
 pub async fn start_postflop_solve(
     State(state): State<AppState>,
     Json(req): Json<PostflopSolveRequest>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Value>, ApiError> {
     // Parse flop cards
     let flop_cards: Result<Vec<Card>, String> = req.flop.iter().map(|s| parse_card(s)).collect();
     let flop = flop_cards
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e}))))?;
+        .map_err(ApiError::bad_request)?;
 
     if flop.len() != 3 {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({"error": "Flop must have exactly 3 cards"}))));
+        return Err(ApiError::bad_request("Flop must have exactly 3 cards"));
     }
 
     // Validate ranges
     if req.oop_range.len() != NUM_CLASSES || req.ip_range.len() != NUM_CLASSES {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({"error": format!("Ranges must have {} elements", NUM_CLASSES)}))));
+        return Err(ApiError::bad_request(format!("Ranges must have {} elements", NUM_CLASSES)));
     }
 
     let flop_arr = [flop[0], flop[1], flop[2]];
@@ -1358,7 +1334,7 @@ pub async fn start_postflop_solve(
     };
 
     let job_id = uuid::Uuid::new_v4().to_string();
-    state.jobs.lock().unwrap().insert(
+    state.jobs.lock()?.insert(
         job_id.clone(),
         JobStatus::Running {
             progress: "Starting postflop solve...".into(),
@@ -1446,6 +1422,6 @@ pub async fn start_postflop_solve(
 pub async fn postflop_solve_status(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Value>, ApiError> {
     job_status_response(&state, &job_id)
 }
