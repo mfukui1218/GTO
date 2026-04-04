@@ -20,7 +20,10 @@ fn main() {
         "leduc" => run_leduc(),
         "equity" => run_equity(),
         "pushfold" => run_push_fold(),
-        "preflop" => run_preflop(),
+        "preflop" => {
+            let mode = args.get(2).map(|s| s.as_str()).unwrap_or("balanced");
+            run_preflop(mode);
+        }
         "web" => {
             let port = args
                 .get(2)
@@ -30,7 +33,7 @@ fn main() {
             rt.block_on(web::server::run_server(port));
         }
         _ => {
-            eprintln!("Usage: gto-solver [kuhn|leduc|equity|pushfold|preflop|web [port]]");
+            eprintln!("Usage: gto-solver [kuhn|leduc|equity|pushfold|preflop [fast|balanced|accurate]|web [port]]");
             std::process::exit(1);
         }
     }
@@ -255,12 +258,19 @@ fn run_push_fold() {
     }
 }
 
-fn run_preflop() {
-    println!("=== Preflop GTO Solver (6-max) ===");
-    println!();
-    println!("Computing equity matrix (Monte Carlo, 2M samples)...");
+fn run_preflop(mode: &str) {
+    let (iterations, chance_sampling, mc_samples, mode_label) = match mode {
+        "fast" => (2_000_000, true, 500_000, "Fast (MCCFR+ 2M, ~5s/matchup)"),
+        "accurate" => (5_000, false, 2_000_000, "Accurate (Vanilla CFR+ 5K, ~3min/matchup)"),
+        _ => (500_000, true, 1_000_000, "Balanced (MCCFR+ 500K, ~2s/matchup)"),
+    };
 
-    let data = PushFoldData::compute(2_000_000);
+    println!("=== Preflop GTO Solver (6-max) ===");
+    println!("Mode: {}", mode_label);
+    println!();
+    println!("Computing equity matrix (Monte Carlo, {}K samples)...", mc_samples / 1000);
+
+    let data = PushFoldData::compute(mc_samples);
 
     for &stack in &[25.0, 50.0, 100.0] {
         println!();
@@ -278,9 +288,9 @@ fn run_preflop() {
             );
 
             let tc = TrainerConfig {
-                iterations: 10_000,
+                iterations,
                 use_cfr_plus: true,
-                use_chance_sampling: false, // Vanilla CFR+ for preflop (28K outcomes is small enough)
+                use_chance_sampling: chance_sampling,
                 print_interval: 0,
             };
 

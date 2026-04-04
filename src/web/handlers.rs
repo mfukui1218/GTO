@@ -876,13 +876,16 @@ pub struct PreflopRequest {
     pub defender: Option<String>,
     /// Tree depth limit: 1=Open only, 2=up to 3bet, 3=full (4bet). Default 3.
     pub max_raises: Option<usize>,
+    /// Solve mode: "fast" (MCCFR, ~5s), "balanced" (MCCFR, ~2s), "accurate" (vanilla CFR+, ~3min).
+    /// Default: "balanced".
+    pub mode: Option<String>,
 }
 
 fn default_preflop_stack() -> f64 {
     100.0
 }
 fn default_preflop_iterations() -> usize {
-    2_000_000
+    500_000
 }
 
 fn parse_position(s: &str) -> Option<Position> {
@@ -902,6 +905,7 @@ fn solve_single_matchup<F: FnMut(usize, usize)>(
     opener: Position,
     defender: Position,
     iterations: usize,
+    chance_sampling: bool,
     max_raises: Option<usize>,
     on_progress: F,
 ) -> Value {
@@ -917,7 +921,7 @@ fn solve_single_matchup<F: FnMut(usize, usize)>(
     let tc = TrainerConfig {
         iterations,
         use_cfr_plus: true,
-        use_chance_sampling: true,
+        use_chance_sampling: chance_sampling,
         print_interval: 0,
     };
 
@@ -1080,9 +1084,16 @@ pub async fn start_preflop(
             }
         }
 
+        // Determine solver parameters from mode
+        let mode = req.mode.as_deref().unwrap_or("balanced");
+        let (iters, chance_sampling) = match mode {
+            "fast" => (2_000_000usize.min(req.iterations), true),
+            "accurate" => (5_000usize.min(req.iterations), false),
+            _ => (req.iterations, true), // balanced
+        };
+
         // Group matchups by opener
         let mut pos_results = serde_json::Map::new();
-        let iters = req.iterations;
         let stack_bb = req.stack_bb;
         let max_raises = req.max_raises;
         for (i, &(opener, defender)) in matchups.iter().enumerate() {
@@ -1101,7 +1112,7 @@ pub async fn start_preflop(
                 i + 1,
                 num_matchups + 1,
             );
-            let result = solve_single_matchup(&data, stack_bb, opener, defender, iters, max_raises, |iter, total| {
+            let result = solve_single_matchup(&data, stack_bb, opener, defender, iters, chance_sampling, max_raises, |iter, total| {
                 let iter_pct = base_pct + step_width * (iter as f64 / total as f64);
                 update_progress(
                     &format!("Solving {} vs {} {:.0}bb ({}/{}) - iter {}/{}",
