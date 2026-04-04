@@ -278,9 +278,9 @@ fn run_preflop() {
             );
 
             let tc = TrainerConfig {
-                iterations: 2_000_000,
+                iterations: 10_000,
                 use_cfr_plus: true,
-                use_chance_sampling: true,
+                use_chance_sampling: false, // Vanilla CFR+ for preflop (28K outcomes is small enough)
                 print_interval: 0,
             };
 
