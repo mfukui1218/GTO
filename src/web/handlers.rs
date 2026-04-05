@@ -1436,3 +1436,200 @@ pub async fn postflop_solve_status(
 ) -> Result<Json<Value>, ApiError> {
     job_status_response(&state, &job_id)
 }
+
+// --- CFR Visualizer ---
+
+#[derive(Deserialize)]
+pub struct CfrVisualizeRequest {
+    pub iterations: Option<usize>,
+    pub cfr_plus: Option<bool>,
+    /// How often to snapshot (every N iterations). Default: auto.
+    pub snapshot_interval: Option<usize>,
+}
+
+pub async fn cfr_visualize(
+    Json(req): Json<CfrVisualizeRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let result = tokio::task::spawn_blocking(move || {
+        let game = gto_games::KuhnPoker;
+        let iterations = req.iterations.unwrap_or(1000).min(50_000);
+        let use_cfr_plus = req.cfr_plus.unwrap_or(false);
+        let snapshot_interval = req.snapshot_interval.unwrap_or_else(|| {
+            // Auto: ~50 snapshots
+            (iterations / 50).max(1)
+        });
+
+        let mut solver = gto_cfr::CfrSolver::new();
+
+        // Collect snapshots
+        let mut snapshots: Vec<Value> = Vec::new();
+        let mut exploitability_curve: Vec<(usize, f64)> = Vec::new();
+
+        // Track per-info-set history
+        let cards = ["J", "Q", "K"];
+        let tracked_keys: Vec<String> = {
+            let mut keys = Vec::new();
+            for c in &cards {
+                keys.push(c.to_string());                    // P0 opening
+                keys.push(format!("{}|x", c));               // P1 after check
+                keys.push(format!("{}|b1", c));              // P1 facing bet
+                keys.push(format!("{}|xb1", c));             // P0 facing bet
+            }
+            keys
+        };
+
+        let action_names_for = |key: &str| -> Vec<&str> {
+            if key.ends_with("|xb1") || key.ends_with("|b1") {
+                vec!["Fold", "Call"]
+            } else {
+                vec!["Check", "Bet"]
+            }
+        };
+
+        let player_for = |key: &str| -> usize {
+            if key.len() <= 2 || key.ends_with("|xb1") { 0 } else { 1 }
+        };
+
+        for i in 1..=iterations {
+            if use_cfr_plus {
+                solver.iterate_plus(&game);
+            } else {
+                solver.iterate(&game);
+            }
+
+            if i % snapshot_interval == 0 || i == iterations {
+                let exploit = solver.exploitability(&game);
+                exploitability_curve.push((i, exploit));
+
+                // Snapshot info set states
+                let mut info_set_states: Vec<Value> = Vec::new();
+                for key in &tracked_keys {
+                    if let Some(node) = solver.nodes.get(key) {
+                        let strategy = node.current_strategy_readonly();
+                        let avg_strategy = node.average_strategy();
+                        let actions = action_names_for(key);
+
+                        info_set_states.push(json!({
+                            "key": key,
+                            "player": player_for(key),
+                            "actions": actions,
+                            "cumulative_regret": node.cumulative_regret,
+                            "current_strategy": strategy,
+                            "average_strategy": avg_strategy,
+                        }));
+                    }
+                }
+
+                snapshots.push(json!({
+                    "iteration": i,
+                    "exploitability": exploit,
+                    "info_sets": info_set_states,
+                }));
+            }
+        }
+
+        // Build game tree structure
+        let tree = build_kuhn_game_tree();
+
+        // Final strategy
+        let strategy = gto_cfr::Strategy::from_solver(&solver);
+        let final_exploit = solver.exploitability(&game);
+
+        let mut final_strategies: Vec<Value> = Vec::new();
+        for key in &tracked_keys {
+            if let Some(probs) = strategy.get(key) {
+                let actions = action_names_for(key);
+                final_strategies.push(json!({
+                    "key": key,
+                    "player": player_for(key),
+                    "actions": actions,
+                    "probabilities": probs,
+                }));
+            }
+        }
+
+        json!({
+            "game": "Kuhn Poker",
+            "iterations": iterations,
+            "cfr_plus": use_cfr_plus,
+            "snapshot_interval": snapshot_interval,
+            "exploitability_curve": exploitability_curve.iter()
+                .map(|(i, e)| json!({"iteration": i, "exploitability": e}))
+                .collect::<Vec<_>>(),
+            "snapshots": snapshots,
+            "game_tree": tree,
+            "final_strategy": final_strategies,
+            "final_exploitability": final_exploit,
+            "nash_value": -1.0 / 18.0,
+        })
+    })
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    Ok(Json(result))
+}
+
+/// Build the Kuhn Poker game tree for visualization.
+fn build_kuhn_game_tree() -> Value {
+    json!({
+        "nodes": [
+            {"id": "root", "type": "chance", "label": "Deal Cards"},
+            // Player 0 decision (for each card)
+            {"id": "p0_J", "type": "decision", "player": 0, "label": "P0: J", "info_set": "J"},
+            {"id": "p0_Q", "type": "decision", "player": 0, "label": "P0: Q", "info_set": "Q"},
+            {"id": "p0_K", "type": "decision", "player": 0, "label": "P0: K", "info_set": "K"},
+            // P0 checks → P1 decision
+            {"id": "p1_J_x", "type": "decision", "player": 1, "label": "P1: J (after check)", "info_set": "J|x"},
+            {"id": "p1_Q_x", "type": "decision", "player": 1, "label": "P1: Q (after check)", "info_set": "Q|x"},
+            {"id": "p1_K_x", "type": "decision", "player": 1, "label": "P1: K (after check)", "info_set": "K|x"},
+            // P0 bets → P1 decision
+            {"id": "p1_J_b", "type": "decision", "player": 1, "label": "P1: J (facing bet)", "info_set": "J|b1"},
+            {"id": "p1_Q_b", "type": "decision", "player": 1, "label": "P1: Q (facing bet)", "info_set": "Q|b1"},
+            {"id": "p1_K_b", "type": "decision", "player": 1, "label": "P1: K (facing bet)", "info_set": "K|b1"},
+            // P1 bets after check → P0 decision
+            {"id": "p0_J_xb", "type": "decision", "player": 0, "label": "P0: J (facing bet)", "info_set": "J|xb1"},
+            {"id": "p0_Q_xb", "type": "decision", "player": 0, "label": "P0: Q (facing bet)", "info_set": "Q|xb1"},
+            {"id": "p0_K_xb", "type": "decision", "player": 0, "label": "P0: K (facing bet)", "info_set": "K|xb1"},
+            // Terminal nodes
+            {"id": "t_xx", "type": "terminal", "label": "Check-Check Showdown"},
+            {"id": "t_xbf", "type": "terminal", "label": "Check-Bet-Fold"},
+            {"id": "t_xbc", "type": "terminal", "label": "Check-Bet-Call Showdown"},
+            {"id": "t_bf", "type": "terminal", "label": "Bet-Fold"},
+            {"id": "t_bc", "type": "terminal", "label": "Bet-Call Showdown"},
+        ],
+        "edges": [
+            // Chance → P0
+            {"from": "root", "to": "p0_J", "label": "J"},
+            {"from": "root", "to": "p0_Q", "label": "Q"},
+            {"from": "root", "to": "p0_K", "label": "K"},
+            // P0 → check/bet
+            {"from": "p0_J", "to": "p1_J_x", "action": "Check"},
+            {"from": "p0_J", "to": "p1_J_b", "action": "Bet"},
+            {"from": "p0_Q", "to": "p1_Q_x", "action": "Check"},
+            {"from": "p0_Q", "to": "p1_Q_b", "action": "Bet"},
+            {"from": "p0_K", "to": "p1_K_x", "action": "Check"},
+            {"from": "p0_K", "to": "p1_K_b", "action": "Bet"},
+            // P1 after check → check(showdown)/bet
+            {"from": "p1_J_x", "to": "t_xx", "action": "Check"},
+            {"from": "p1_J_x", "to": "p0_J_xb", "action": "Bet"},
+            {"from": "p1_Q_x", "to": "t_xx", "action": "Check"},
+            {"from": "p1_Q_x", "to": "p0_Q_xb", "action": "Bet"},
+            {"from": "p1_K_x", "to": "t_xx", "action": "Check"},
+            {"from": "p1_K_x", "to": "p0_K_xb", "action": "Bet"},
+            // P1 facing bet → fold/call
+            {"from": "p1_J_b", "to": "t_bf", "action": "Fold"},
+            {"from": "p1_J_b", "to": "t_bc", "action": "Call"},
+            {"from": "p1_Q_b", "to": "t_bf", "action": "Fold"},
+            {"from": "p1_Q_b", "to": "t_bc", "action": "Call"},
+            {"from": "p1_K_b", "to": "t_bf", "action": "Fold"},
+            {"from": "p1_K_b", "to": "t_bc", "action": "Call"},
+            // P0 facing bet after check → fold/call
+            {"from": "p0_J_xb", "to": "t_xbf", "action": "Fold"},
+            {"from": "p0_J_xb", "to": "t_xbc", "action": "Call"},
+            {"from": "p0_Q_xb", "to": "t_xbf", "action": "Fold"},
+            {"from": "p0_Q_xb", "to": "t_xbc", "action": "Call"},
+            {"from": "p0_K_xb", "to": "t_xbf", "action": "Fold"},
+            {"from": "p0_K_xb", "to": "t_xbc", "action": "Call"},
+        ]
+    })
+}

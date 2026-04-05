@@ -33,6 +33,7 @@ pub async fn run_server(port: u16) {
         .route("/api/postflop-solve/start", post(handlers::start_postflop_solve))
         .route("/api/postflop-solve/status/{job_id}", get(handlers::postflop_solve_status))
         .route("/api/range-presets", get(handlers::get_range_presets))
+        .route("/api/cfr-visualize", post(handlers::cfr_visualize))
         .layer(cors)
         .with_state(state);
 

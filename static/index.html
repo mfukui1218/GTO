@@ -214,6 +214,7 @@ table.range-grid td.selected { background: rgba(35,134,54,0.8) !important; color
   <div class="tab" data-tab="equity" id="tab-equity">Equity Calculator</div>
   <div class="tab" data-tab="range-editor" id="tab-range-editor">Range Editor</div>
   <div class="tab" data-tab="range-equity" id="tab-range-equity">Range vs Range</div>
+  <div class="tab" data-tab="cfr-viz" id="tab-cfr-viz">CFR Visualizer</div>
 </div>
 
 <div class="content">
@@ -464,6 +465,88 @@ table.range-grid td.selected { background: rgba(35,134,54,0.8) !important; color
     </div>
     <div id="rr-progress"></div>
     <div id="rr-result"></div>
+  </div>
+
+  <!-- CFR Visualizer -->
+  <div id="cfr-viz" class="panel">
+    <div class="desc">
+      <strong>CFR Visualizer</strong> — Kuhn Pokerを使って、CFRアルゴリズムの計算過程をリアルタイムに可視化します。
+      <ul>
+        <li>Exploitabilityの収束曲線</li>
+        <li>各情報集合のリグレット変化</li>
+        <li>戦略の収束過程</li>
+        <li>ゲームツリー構造</li>
+        <li>リグレットマッチングの仕組み</li>
+      </ul>
+    </div>
+
+    <div class="controls">
+      <label>Iterations:</label>
+      <input type="number" id="viz-iters" value="1000" min="10" max="50000">
+      <label>
+        <input type="checkbox" id="viz-cfr-plus"> CFR+
+      </label>
+      <button class="btn" id="viz-run" onclick="runCfrViz()">Run CFR</button>
+    </div>
+
+    <div id="viz-progress" style="margin-bottom:16px;"></div>
+
+    <!-- Sub-panels -->
+    <div class="sub-tabs" id="viz-subtabs" style="display:none;">
+      <div class="sub-tab active" data-subtab="viz-convergence" onclick="switchSubTab('cfr-viz','viz-convergence')">Convergence</div>
+      <div class="sub-tab" data-subtab="viz-regret" onclick="switchSubTab('cfr-viz','viz-regret')">Regret</div>
+      <div class="sub-tab" data-subtab="viz-strategy" onclick="switchSubTab('cfr-viz','viz-strategy')">Strategy</div>
+      <div class="sub-tab" data-subtab="viz-tree" onclick="switchSubTab('cfr-viz','viz-tree')">Game Tree</div>
+      <div class="sub-tab" data-subtab="viz-matching" onclick="switchSubTab('cfr-viz','viz-matching')">Regret Matching</div>
+    </div>
+
+    <!-- 1. Convergence curve -->
+    <div id="viz-convergence" class="sub-panel active">
+      <div class="section-title">Exploitability Convergence</div>
+      <canvas id="viz-exploit-chart" width="800" height="300" style="max-width:100%;background:#161b22;border-radius:8px;border:1px solid #30363d;"></canvas>
+      <div id="viz-exploit-stats" class="result-meta" style="margin-top:12px;"></div>
+    </div>
+
+    <!-- 2. Regret evolution -->
+    <div id="viz-regret" class="sub-panel">
+      <div class="section-title">Cumulative Regret Over Time</div>
+      <div class="controls" style="margin-bottom:8px;">
+        <label>Info Set:</label>
+        <select id="viz-regret-select" onchange="drawRegretChart()"></select>
+      </div>
+      <canvas id="viz-regret-chart" width="800" height="300" style="max-width:100%;background:#161b22;border-radius:8px;border:1px solid #30363d;"></canvas>
+      <div id="viz-regret-detail" style="margin-top:12px;font-size:13px;color:#8b949e;"></div>
+    </div>
+
+    <!-- 3. Strategy evolution -->
+    <div id="viz-strategy" class="sub-panel">
+      <div class="section-title">Strategy Convergence</div>
+      <div class="controls" style="margin-bottom:8px;">
+        <label>Info Set:</label>
+        <select id="viz-strat-select" onchange="drawStrategyChart()"></select>
+      </div>
+      <canvas id="viz-strat-chart" width="800" height="300" style="max-width:100%;background:#161b22;border-radius:8px;border:1px solid #30363d;"></canvas>
+      <div id="viz-strat-final" style="margin-top:12px;"></div>
+    </div>
+
+    <!-- 4. Game tree -->
+    <div id="viz-tree" class="sub-panel">
+      <div class="section-title">Kuhn Poker Game Tree</div>
+      <div id="viz-tree-container" style="overflow-x:auto;"></div>
+    </div>
+
+    <!-- 5. Regret matching explanation -->
+    <div id="viz-matching" class="sub-panel">
+      <div class="section-title">Regret Matching Visualization</div>
+      <div class="controls" style="margin-bottom:8px;">
+        <label>Info Set:</label>
+        <select id="viz-match-select" onchange="drawMatchingViz()"></select>
+        <label>Snapshot:</label>
+        <input type="range" id="viz-match-slider" min="0" max="0" value="0" oninput="drawMatchingViz()" style="width:200px;">
+        <span id="viz-match-iter">0</span>
+      </div>
+      <div id="viz-matching-display" style="display:flex;gap:24px;flex-wrap:wrap;"></div>
+    </div>
   </div>
 
 
@@ -3173,6 +3256,427 @@ initRangeEditor();
 initRangeVsRange();
 initPostflop();
 initHandFlow();
+
+// ============================================================
+// CFR Visualizer
+// ============================================================
+let vizData = null;
+
+async function runCfrViz() {
+  const iters = parseInt(document.getElementById('viz-iters').value) || 1000;
+  const cfrPlus = document.getElementById('viz-cfr-plus').checked;
+  const btn = document.getElementById('viz-run');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Computing...';
+  document.getElementById('viz-progress').innerHTML = '<span class="spinner"></span>Running CFR...';
+  document.getElementById('viz-subtabs').style.display = 'none';
+
+  try {
+    const resp = await fetch('/api/cfr-visualize', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ iterations: iters, cfr_plus: cfrPlus })
+    });
+    vizData = await resp.json();
+    document.getElementById('viz-progress').innerHTML = '';
+    document.getElementById('viz-subtabs').style.display = 'flex';
+
+    // Populate selects
+    populateVizSelects();
+    // Draw initial charts
+    drawExploitChart();
+    drawRegretChart();
+    drawStrategyChart();
+    drawGameTree();
+    drawMatchingViz();
+    // Show convergence tab
+    switchSubTab('cfr-viz', 'viz-convergence');
+  } catch(e) {
+    document.getElementById('viz-progress').innerHTML = `<div class="error">${e}</div>`;
+  }
+  btn.disabled = false;
+  btn.innerHTML = 'Run CFR';
+}
+
+function populateVizSelects() {
+  if (!vizData || !vizData.snapshots || vizData.snapshots.length === 0) return;
+  const last = vizData.snapshots[vizData.snapshots.length - 1];
+  const keys = last.info_sets.map(is => is.key);
+  for (const selId of ['viz-regret-select', 'viz-strat-select', 'viz-match-select']) {
+    const sel = document.getElementById(selId);
+    sel.innerHTML = keys.map(k => `<option value="${k}">${k}</option>`).join('');
+  }
+  const slider = document.getElementById('viz-match-slider');
+  slider.max = vizData.snapshots.length - 1;
+  slider.value = vizData.snapshots.length - 1;
+}
+
+// --- 1. Exploitability Convergence ---
+function drawExploitChart() {
+  if (!vizData) return;
+  const canvas = document.getElementById('viz-exploit-chart');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const curve = vizData.exploitability_curve;
+  if (curve.length < 2) return;
+
+  const maxIter = curve[curve.length - 1].iteration;
+  const maxExploit = Math.max(...curve.map(d => d.exploitability)) * 1.1;
+  const pad = {l: 60, r: 20, t: 20, b: 40};
+  const pw = W - pad.l - pad.r, ph = H - pad.t - pad.b;
+
+  // Axes
+  ctx.strokeStyle = '#30363d';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l, H - pad.b); ctx.lineTo(W - pad.r, H - pad.b);
+  ctx.stroke();
+
+  // Grid lines
+  ctx.strokeStyle = '#21262d';
+  ctx.setLineDash([4, 4]);
+  for (let i = 1; i <= 4; i++) {
+    const y = pad.t + ph * (1 - i / 4);
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // Labels
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '11px monospace';
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 4; i++) {
+    const val = (maxExploit * i / 4).toFixed(3);
+    const y = pad.t + ph * (1 - i / 4);
+    ctx.fillText(val, pad.l - 6, y + 4);
+  }
+  ctx.textAlign = 'center';
+  for (let i = 0; i <= 4; i++) {
+    const iter = Math.round(maxIter * i / 4);
+    const x = pad.l + pw * i / 4;
+    ctx.fillText(iter, x, H - pad.b + 16);
+  }
+  ctx.fillText('Iteration', W / 2, H - 4);
+  ctx.save(); ctx.translate(14, H / 2); ctx.rotate(-Math.PI / 2);
+  ctx.fillText('Exploitability (bb)', 0, 0); ctx.restore();
+
+  // Line
+  ctx.strokeStyle = '#58a6ff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  curve.forEach((d, i) => {
+    const x = pad.l + (d.iteration / maxIter) * pw;
+    const y = pad.t + ph * (1 - d.exploitability / maxExploit);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // Dot at end
+  const last = curve[curve.length - 1];
+  const lx = pad.l + (last.iteration / maxIter) * pw;
+  const ly = pad.t + ph * (1 - last.exploitability / maxExploit);
+  ctx.fillStyle = '#58a6ff';
+  ctx.beginPath(); ctx.arc(lx, ly, 4, 0, Math.PI * 2); ctx.fill();
+
+  // Stats
+  document.getElementById('viz-exploit-stats').innerHTML = `
+    <div class="meta-item"><div class="label">Final Exploitability</div><div class="value">${last.exploitability.toFixed(4)} bb</div></div>
+    <div class="meta-item"><div class="label">Iterations</div><div class="value">${vizData.iterations}</div></div>
+    <div class="meta-item"><div class="label">Nash Value</div><div class="value">${vizData.nash_value.toFixed(4)} bb</div></div>
+    <div class="meta-item"><div class="label">Mode</div><div class="value">${vizData.cfr_plus ? 'CFR+' : 'Vanilla CFR'}</div></div>
+  `;
+}
+
+// --- 2. Regret Chart ---
+function drawRegretChart() {
+  if (!vizData) return;
+  const canvas = document.getElementById('viz-regret-chart');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const key = document.getElementById('viz-regret-select').value;
+  const colors = ['#f85149', '#3fb950', '#d29922', '#a371f7'];
+
+  // Extract regret history for this key
+  const history = [];
+  let actionNames = [];
+  vizData.snapshots.forEach(snap => {
+    const is = snap.info_sets.find(s => s.key === key);
+    if (is) {
+      history.push({ iter: snap.iteration, regrets: is.cumulative_regret });
+      if (actionNames.length === 0) actionNames = is.actions;
+    }
+  });
+  if (history.length < 2) return;
+
+  const maxIter = history[history.length - 1].iter;
+  const allRegrets = history.flatMap(h => h.regrets);
+  const minR = Math.min(0, ...allRegrets);
+  const maxR = Math.max(1, ...allRegrets);
+  const range = maxR - minR;
+
+  const pad = {l: 70, r: 20, t: 20, b: 40};
+  const pw = W - pad.l - pad.r, ph = H - pad.t - pad.b;
+
+  // Axes
+  ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l, H - pad.b); ctx.lineTo(W - pad.r, H - pad.b); ctx.stroke();
+
+  // Zero line
+  if (minR < 0) {
+    const zy = pad.t + ph * (1 - (0 - minR) / range);
+    ctx.strokeStyle = '#484f58'; ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.moveTo(pad.l, zy); ctx.lineTo(W - pad.r, zy); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Lines per action
+  const numActions = history[0].regrets.length;
+  for (let a = 0; a < numActions; a++) {
+    ctx.strokeStyle = colors[a % colors.length];
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    history.forEach((h, i) => {
+      const x = pad.l + (h.iter / maxIter) * pw;
+      const y = pad.t + ph * (1 - (h.regrets[a] - minR) / range);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  // Legend
+  ctx.font = '12px monospace';
+  actionNames.forEach((name, a) => {
+    ctx.fillStyle = colors[a % colors.length];
+    const lx = pad.l + 10 + a * 100;
+    ctx.fillRect(lx, pad.t + 5, 12, 12);
+    ctx.fillStyle = '#c9d1d9';
+    ctx.textAlign = 'left';
+    ctx.fillText(name, lx + 16, pad.t + 15);
+  });
+
+  // Labels
+  ctx.fillStyle = '#8b949e'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('Iteration', W / 2, H - 4);
+
+  // Detail
+  const lastSnap = vizData.snapshots[vizData.snapshots.length - 1];
+  const lastIS = lastSnap.info_sets.find(s => s.key === key);
+  if (lastIS) {
+    document.getElementById('viz-regret-detail').innerHTML =
+      `<strong>${key}</strong> — Final regrets: ` +
+      lastIS.actions.map((a, i) => `${a}: <span style="color:${colors[i]}">${lastIS.cumulative_regret[i].toFixed(2)}</span>`).join(' | ') +
+      `<br>Positive regrets drive strategy via regret matching. Negative regrets (clamped to 0 in CFR+) indicate suboptimal actions.`;
+  }
+}
+
+// --- 3. Strategy Chart ---
+function drawStrategyChart() {
+  if (!vizData) return;
+  const canvas = document.getElementById('viz-strat-chart');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const key = document.getElementById('viz-strat-select').value;
+  const colors = ['#f85149', '#3fb950', '#d29922', '#a371f7'];
+
+  const history = [];
+  let actionNames = [];
+  vizData.snapshots.forEach(snap => {
+    const is = snap.info_sets.find(s => s.key === key);
+    if (is) {
+      history.push({ iter: snap.iteration, strat: is.average_strategy });
+      if (actionNames.length === 0) actionNames = is.actions;
+    }
+  });
+  if (history.length < 2) return;
+
+  const maxIter = history[history.length - 1].iter;
+  const pad = {l: 60, r: 20, t: 20, b: 40};
+  const pw = W - pad.l - pad.r, ph = H - pad.t - pad.b;
+
+  // Axes
+  ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l, H - pad.b); ctx.lineTo(W - pad.r, H - pad.b); ctx.stroke();
+
+  // Y labels (0% - 100%)
+  ctx.fillStyle = '#8b949e'; ctx.font = '11px monospace'; ctx.textAlign = 'right';
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + ph * (1 - i / 4);
+    ctx.fillText((i * 25) + '%', pad.l - 6, y + 4);
+    ctx.strokeStyle = '#21262d'; ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Stacked area fill
+  const numActions = history[0].strat.length;
+  for (let a = numActions - 1; a >= 0; a--) {
+    ctx.fillStyle = colors[a % colors.length] + '40';
+    ctx.strokeStyle = colors[a % colors.length];
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    history.forEach((h, i) => {
+      const x = pad.l + (h.iter / maxIter) * pw;
+      const cumProb = h.strat.slice(0, a + 1).reduce((s, v) => s + v, 0);
+      const y = pad.t + ph * (1 - cumProb);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  // Legend
+  ctx.font = '12px monospace';
+  actionNames.forEach((name, a) => {
+    ctx.fillStyle = colors[a % colors.length];
+    const lx = pad.l + 10 + a * 100;
+    ctx.fillRect(lx, pad.t + 5, 12, 12);
+    ctx.fillStyle = '#c9d1d9'; ctx.textAlign = 'left';
+    ctx.fillText(name, lx + 16, pad.t + 15);
+  });
+
+  // Final strategy display
+  const lastSnap = vizData.snapshots[vizData.snapshots.length - 1];
+  const lastIS = lastSnap.info_sets.find(s => s.key === key);
+  if (lastIS) {
+    document.getElementById('viz-strat-final').innerHTML = `
+      <div class="result-meta">
+        ${lastIS.actions.map((a, i) => `<div class="meta-item"><div class="label">${a}</div><div class="value" style="color:${colors[i]}">${(lastIS.average_strategy[i] * 100).toFixed(1)}%</div></div>`).join('')}
+      </div>
+    `;
+  }
+}
+
+// --- 4. Game Tree ---
+function drawGameTree() {
+  if (!vizData || !vizData.game_tree) return;
+  const container = document.getElementById('viz-tree-container');
+  const tree = vizData.game_tree;
+  const lastSnap = vizData.snapshots[vizData.snapshots.length - 1];
+
+  // Build strategy lookup
+  const stratMap = {};
+  if (lastSnap) {
+    lastSnap.info_sets.forEach(is => {
+      stratMap[is.key] = is;
+    });
+  }
+
+  let html = '<div style="font-size:12px;color:#8b949e;margin-bottom:12px;">Nodes colored by type: <span style="color:#d29922;">Chance</span> | <span style="color:#58a6ff;">Player 0</span> | <span style="color:#f0883e;">Player 1</span> | <span style="color:#8b949e;">Terminal</span></div>';
+  html += '<svg width="900" height="500" style="background:#0d1117;border-radius:8px;border:1px solid #30363d;">';
+
+  // Layout nodes in levels
+  const levels = {
+    'root': {x: 450, y: 30},
+    'p0_J': {x: 150, y: 100}, 'p0_Q': {x: 450, y: 100}, 'p0_K': {x: 750, y: 100},
+    'p1_J_x': {x: 75, y: 200}, 'p1_J_b': {x: 225, y: 200},
+    'p1_Q_x': {x: 375, y: 200}, 'p1_Q_b': {x: 525, y: 200},
+    'p1_K_x': {x: 675, y: 200}, 'p1_K_b': {x: 825, y: 200},
+    'p0_J_xb': {x: 75, y: 310}, 'p0_Q_xb': {x: 375, y: 310}, 'p0_K_xb': {x: 675, y: 310},
+    't_xx': {x: 40, y: 410}, 't_xbf': {x: 120, y: 410}, 't_xbc': {x: 200, y: 410},
+    't_bf': {x: 350, y: 410}, 't_bc': {x: 550, y: 410},
+  };
+
+  // Draw edges
+  tree.edges.forEach(e => {
+    const from = levels[e.from], to = levels[e.to];
+    if (!from || !to) return;
+    html += `<line x1="${from.x}" y1="${from.y + 15}" x2="${to.x}" y2="${to.y - 15}" stroke="#30363d" stroke-width="1.5"/>`;
+    const mx = (from.x + to.x) / 2, my = (from.y + to.y) / 2;
+    const label = e.action || e.label || '';
+    html += `<text x="${mx}" y="${my - 4}" text-anchor="middle" fill="#8b949e" font-size="10">${label}</text>`;
+  });
+
+  // Draw nodes
+  tree.nodes.forEach(n => {
+    const pos = levels[n.id];
+    if (!pos) return;
+    let color = '#8b949e';
+    if (n.type === 'chance') color = '#d29922';
+    else if (n.type === 'decision' && n.player === 0) color = '#58a6ff';
+    else if (n.type === 'decision' && n.player === 1) color = '#f0883e';
+
+    html += `<circle cx="${pos.x}" cy="${pos.y}" r="14" fill="#161b22" stroke="${color}" stroke-width="2"/>`;
+    html += `<text x="${pos.x}" y="${pos.y + 4}" text-anchor="middle" fill="${color}" font-size="10" font-weight="600">${n.label ? n.label.split(':').pop().trim().substring(0,3) : ''}</text>`;
+
+    // Show strategy on decision nodes
+    if (n.info_set && stratMap[n.info_set]) {
+      const is = stratMap[n.info_set];
+      const stratText = is.actions.map((a, i) => `${a[0]}:${(is.average_strategy[i]*100).toFixed(0)}%`).join(' ');
+      html += `<text x="${pos.x}" y="${pos.y + 30}" text-anchor="middle" fill="#c9d1d9" font-size="9">${stratText}</text>`;
+    }
+  });
+
+  html += '</svg>';
+  container.innerHTML = html;
+}
+
+// --- 5. Regret Matching Viz ---
+function drawMatchingViz() {
+  if (!vizData) return;
+  const key = document.getElementById('viz-match-select').value;
+  const snapIdx = parseInt(document.getElementById('viz-match-slider').value);
+  const snap = vizData.snapshots[snapIdx];
+  if (!snap) return;
+
+  document.getElementById('viz-match-iter').textContent = `Iter ${snap.iteration}`;
+
+  const is = snap.info_sets.find(s => s.key === key);
+  if (!is) { document.getElementById('viz-matching-display').innerHTML = 'No data'; return; }
+
+  const colors = ['#f85149', '#3fb950', '#d29922', '#a371f7'];
+  const posRegrets = is.cumulative_regret.map(r => Math.max(0, r));
+  const sum = posRegrets.reduce((a, b) => a + b, 0);
+  const matched = sum > 0 ? posRegrets.map(r => r / sum) : posRegrets.map(() => 1 / posRegrets.length);
+
+  let html = '';
+
+  // Regret values
+  html += '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;min-width:250px;">';
+  html += `<div style="font-size:14px;font-weight:600;color:#e6edf3;margin-bottom:12px;">Info Set: ${key}</div>`;
+  html += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px;">Step 1: Cumulative Regrets</div>';
+  is.actions.forEach((a, i) => {
+    const r = is.cumulative_regret[i];
+    const barW = Math.abs(r) / (Math.max(...is.cumulative_regret.map(Math.abs)) || 1) * 100;
+    html += `<div style="margin:4px 0;"><span style="color:${colors[i]};font-weight:600;width:50px;display:inline-block;">${a}</span>`;
+    html += `<span style="font-size:13px;color:#c9d1d9;">${r.toFixed(2)}</span>`;
+    html += `<div style="height:6px;width:${barW}%;background:${r > 0 ? colors[i] : '#484f58'};border-radius:3px;margin-top:2px;"></div></div>`;
+  });
+  html += '</div>';
+
+  // Arrow
+  html += '<div style="display:flex;align-items:center;font-size:24px;color:#484f58;">→</div>';
+
+  // Positive regrets
+  html += '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;min-width:200px;">';
+  html += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px;">Step 2: max(0, regret)</div>';
+  posRegrets.forEach((r, i) => {
+    html += `<div style="margin:4px 0;"><span style="color:${colors[i]};font-weight:600;width:50px;display:inline-block;">${is.actions[i]}</span>`;
+    html += `<span style="font-size:13px;color:#c9d1d9;">${r.toFixed(2)}</span></div>`;
+  });
+  html += `<div style="margin-top:8px;font-size:11px;color:#8b949e;">Sum: ${sum.toFixed(2)}</div>`;
+  html += '</div>';
+
+  // Arrow
+  html += '<div style="display:flex;align-items:center;font-size:24px;color:#484f58;">→</div>';
+
+  // Normalized strategy
+  html += '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;min-width:200px;">';
+  html += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px;">Step 3: Normalize → Strategy</div>';
+  matched.forEach((p, i) => {
+    html += `<div style="margin:4px 0;"><span style="color:${colors[i]};font-weight:600;width:50px;display:inline-block;">${is.actions[i]}</span>`;
+    html += `<span style="font-size:16px;font-weight:700;color:#e6edf3;">${(p * 100).toFixed(1)}%</span>`;
+    html += `<div style="height:8px;width:${p*100}%;background:${colors[i]};border-radius:4px;margin-top:2px;"></div></div>`;
+  });
+  html += '</div>';
+
+  document.getElementById('viz-matching-display').innerHTML = html;
+}
+
 </script>
 </body>
 </html>
