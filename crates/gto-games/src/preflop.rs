@@ -83,12 +83,13 @@ pub struct PreflopConfig {
     pub position: Position,
     pub defender: Position,
     pub dead_money: f64,
-    pub open_size: f64,
-    pub three_bet_size: f64,
-    pub four_bet_size: f64,
-    pub limp_raise_size: f64,
-    pub limp_reraise_size: f64,
-    /// Tree depth limit: 1=Open only, 2=up to 3bet, 3=full (4bet).
+    /// Raise sizes in bb for each raise level in the open-raise line.
+    /// Index 0 = open, 1 = 3bet, 2 = 4bet, 3 = 5bet, etc.
+    pub raise_sizes: Vec<f64>,
+    /// Raise sizes in bb for the limp line.
+    /// Index 0 = limp-raise (by defender), 1 = limp-reraise (by opener), etc.
+    pub limp_raise_sizes: Vec<f64>,
+    /// Maximum number of raises allowed. 0 = unlimited (stack is the limit).
     pub max_raises: usize,
 }
 
@@ -106,12 +107,9 @@ impl PreflopConfig {
             position: opener,
             defender,
             dead_money,
-            open_size: 2.5,
-            three_bet_size: three_bet,
-            four_bet_size: four_bet,
-            limp_raise_size: 3.5,
-            limp_reraise_size: 10.0,
-            max_raises: 3,
+            raise_sizes: vec![2.5, three_bet, four_bet],
+            limp_raise_sizes: vec![3.5, 10.0],
+            max_raises: 0, // unlimited
         }
     }
 
@@ -126,14 +124,61 @@ impl PreflopConfig {
     }
 
     /// Set the maximum number of raises (tree depth limit).
+    /// 0 = unlimited (constrained by stack and raise_sizes length).
     pub fn with_max_raises(mut self, n: usize) -> Self {
-        self.max_raises = n.clamp(1, 3);
+        self.max_raises = n;
         self
     }
 
     /// Whether limp is allowed (only SB vs BB).
     pub fn can_limp(&self) -> bool {
         self.position == Position::SB && self.defender == Position::BB
+    }
+
+    /// Backward-compatible accessors.
+    pub fn open_size(&self) -> f64 {
+        self.raise_sizes.first().copied().unwrap_or(2.5)
+    }
+    pub fn three_bet_size(&self) -> f64 {
+        self.raise_sizes.get(1).copied().unwrap_or(9.0)
+    }
+    pub fn four_bet_size(&self) -> f64 {
+        self.raise_sizes.get(2).copied().unwrap_or(22.0)
+    }
+
+    /// Get the raise size for a given raise level (0-based).
+    /// If the level exceeds the configured sizes, extrapolate by ~2.5x the previous size.
+    fn raise_size_for_level(&self, level: usize) -> f64 {
+        if level < self.raise_sizes.len() {
+            self.raise_sizes[level]
+        } else {
+            // Extrapolate: ~2.5x last configured size, then keep doubling
+            let last = *self.raise_sizes.last().unwrap_or(&2.5);
+            let extra = level - self.raise_sizes.len() + 1;
+            last * 2.5_f64.powi(extra as i32)
+        }
+    }
+
+    /// Get the limp-raise size for a given level (0-based).
+    fn limp_raise_size_for_level(&self, level: usize) -> f64 {
+        if level < self.limp_raise_sizes.len() {
+            self.limp_raise_sizes[level]
+        } else {
+            let last = *self.limp_raise_sizes.last().unwrap_or(&3.5);
+            let extra = level - self.limp_raise_sizes.len() + 1;
+            last * 2.5_f64.powi(extra as i32)
+        }
+    }
+
+    /// Effective max raises, considering both the explicit limit and raise_sizes length.
+    /// When max_raises == 0 (unlimited), constrained only by stack.
+    fn effective_max_raises(&self) -> usize {
+        if self.max_raises > 0 {
+            self.max_raises
+        } else {
+            // Practical upper bound: stack-limited, but cap at a sane maximum
+            20
+        }
     }
 }
 
@@ -170,137 +215,88 @@ impl PreflopGame {
         }
     }
 
+    /// Classify the current history into its line type and count raises.
+    fn classify_history(history: &[Action]) -> HistoryInfo {
+        if history.is_empty() {
+            return HistoryInfo { line: Line::Open, num_raises: 0, last_action: None };
+        }
+        let first = &history[0];
+        let line = if matches!(first, Action::Call) { Line::Limp } else { Line::Open };
+        let num_raises = history.iter().filter(|a| matches!(a, Action::Raise(_))).count();
+        let last_action = history.last().cloned();
+        HistoryInfo { line, num_raises, last_action }
+    }
+
+    /// Check if another raise is allowed given current raise count.
+    fn can_add_raise(&self, num_raises: usize) -> bool {
+        let mr = self.config.max_raises;
+        mr == 0 || num_raises < mr
+    }
+
     /// Get available actions given current state.
     fn get_actions(&self, state: &PreflopState) -> Vec<Action> {
         let stack = self.config.stack_bb;
         let cfg = &self.config;
+        let info = Self::classify_history(&state.history);
 
-        match state.history.as_slice() {
-            // Opener first action: Fold / [Limp(Call) only if SB vs BB] / Open(Raise) / AllIn
-            [] => {
+        match (&info.line, &info.last_action) {
+            // Opener's first action
+            (Line::Open, None) => {
                 let mut actions = vec![Action::Fold];
                 if cfg.can_limp() {
-                    actions.push(Action::Call); // Call = limp to 1bb
+                    actions.push(Action::Call);
                 }
-                if cfg.open_size < stack {
-                    actions.push(Action::Raise((cfg.open_size * 10.0) as u32));
+                let open_size = cfg.raise_size_for_level(0);
+                if open_size < stack {
+                    actions.push(Action::Raise((open_size * 10.0) as u32));
                 }
-                if self.should_offer_allin(Some(cfg.open_size)) {
+                if self.should_offer_allin(Some(open_size)) {
                     actions.push(Action::AllIn);
                 }
                 actions
             }
 
-            // Opener folded → terminal
-            [Action::Fold] => unreachable!(),
-
-            // Opener limped → Defender: Check / Raise / AllIn
-            [Action::Call] => {
+            // After a limp → defender checks or raises
+            (Line::Limp, Some(Action::Call)) if info.num_raises == 0 => {
                 let mut actions = vec![Action::Check];
-                let has_raise = cfg.max_raises >= 2 && cfg.limp_raise_size < stack;
+                let raise_size = cfg.limp_raise_size_for_level(0);
+                // Limp counts as the first "action" so limp-raise is the 2nd raise-level action
+                let has_raise = self.can_add_raise(1) && raise_size < stack;
                 if has_raise {
-                    actions.push(Action::Raise((cfg.limp_raise_size * 10.0) as u32));
+                    actions.push(Action::Raise((raise_size * 10.0) as u32));
                 }
-                if self.should_offer_allin(if has_raise { Some(cfg.limp_raise_size) } else { None }) {
+                if self.should_offer_allin(if has_raise { Some(raise_size) } else { None }) {
                     actions.push(Action::AllIn);
                 }
                 actions
             }
 
-            // Opener limped, Defender checked → terminal (showdown)
-            [Action::Call, Action::Check] => unreachable!(),
+            // After AllIn → opponent: Fold / Call
+            (_, Some(Action::AllIn)) => {
+                vec![Action::Fold, Action::Call]
+            }
 
-            // Opener limped, Defender raised → Opener: Fold / Call / Reraise / AllIn
-            [Action::Call, Action::Raise(_)] => {
+            // After a Raise (in either line) → Fold / Call / [re-raise] / [AllIn]
+            (line, Some(Action::Raise(_))) => {
                 let mut actions = vec![Action::Fold, Action::Call];
-                let has_raise = cfg.max_raises >= 3 && cfg.limp_reraise_size < stack;
+                // For max_raises limit: in the limp line, limp counts as the 1st "action level"
+                let effective_count = match line {
+                    Line::Open => info.num_raises,
+                    Line::Limp => info.num_raises + 1, // limp is level 1
+                };
+                let within_limit = self.can_add_raise(effective_count);
+                let raise_size = match line {
+                    Line::Open => cfg.raise_size_for_level(info.num_raises),
+                    Line::Limp => cfg.limp_raise_size_for_level(info.num_raises),
+                };
+                let has_raise = within_limit && raise_size < stack;
                 if has_raise {
-                    actions.push(Action::Raise((cfg.limp_reraise_size * 10.0) as u32));
+                    actions.push(Action::Raise((raise_size * 10.0) as u32));
                 }
-                if self.should_offer_allin(if has_raise { Some(cfg.limp_reraise_size) } else { None }) {
+                if self.should_offer_allin(if has_raise { Some(raise_size) } else { None }) {
                     actions.push(Action::AllIn);
                 }
                 actions
-            }
-
-            [Action::Call, Action::Raise(_), Action::Fold] => unreachable!(),
-            [Action::Call, Action::Raise(_), Action::Call] => unreachable!(),
-
-            // Opener limped, Defender raised, Opener reraised → Defender: Fold / Call / AllIn
-            [Action::Call, Action::Raise(_), Action::Raise(_)] => {
-                let mut actions = vec![Action::Fold, Action::Call];
-                if self.should_offer_allin(None) {
-                    actions.push(Action::AllIn);
-                }
-                actions
-            }
-
-            [Action::Call, Action::Raise(_), Action::Raise(_), Action::AllIn] => {
-                vec![Action::Fold, Action::Call]
-            }
-
-            [Action::Call, Action::Raise(_), Action::Raise(_), _] => unreachable!(),
-
-            [Action::Call, Action::Raise(_), Action::AllIn] => {
-                vec![Action::Fold, Action::Call]
-            }
-
-            [Action::Call, Action::AllIn] => {
-                vec![Action::Fold, Action::Call]
-            }
-
-            // Opener opened → Defender: Fold / Call / 3bet / AllIn
-            [Action::Raise(_)] => {
-                let mut actions = vec![Action::Fold, Action::Call];
-                let has_raise = cfg.max_raises >= 2 && cfg.three_bet_size < stack;
-                if has_raise {
-                    actions.push(Action::Raise((cfg.three_bet_size * 10.0) as u32));
-                }
-                if self.should_offer_allin(if has_raise { Some(cfg.three_bet_size) } else { None }) {
-                    actions.push(Action::AllIn);
-                }
-                actions
-            }
-
-            // Opener opened, Defender 3bet → Opener: Fold / Call / 4bet / AllIn
-            [Action::Raise(_), Action::Raise(_)] => {
-                let mut actions = vec![Action::Fold, Action::Call];
-                let has_raise = cfg.max_raises >= 3 && cfg.four_bet_size < stack;
-                if has_raise {
-                    actions.push(Action::Raise((cfg.four_bet_size * 10.0) as u32));
-                }
-                if self.should_offer_allin(if has_raise { Some(cfg.four_bet_size) } else { None }) {
-                    actions.push(Action::AllIn);
-                }
-                actions
-            }
-
-            // Opener opened, Defender 3bet, Opener 4bet → Defender: Fold / Call / AllIn
-            [Action::Raise(_), Action::Raise(_), Action::Raise(_)] => {
-                let mut actions = vec![Action::Fold, Action::Call];
-                // After 4bet, AllIn is the natural next aggression (5bet = AllIn in practice)
-                if self.should_offer_allin(None) {
-                    actions.push(Action::AllIn);
-                }
-                actions
-            }
-
-            [Action::Raise(_), Action::Raise(_), Action::Raise(_), Action::AllIn] => {
-                vec![Action::Fold, Action::Call]
-            }
-
-            [Action::Raise(_), Action::Raise(_), Action::Raise(_), _] => unreachable!(),
-
-            [Action::Raise(_), Action::Raise(_), Action::AllIn] => {
-                vec![Action::Fold, Action::Call]
-            }
-
-            [Action::Raise(_), Action::AllIn] => {
-                vec![Action::Fold, Action::Call]
-            }
-
-            [Action::AllIn] => {
-                vec![Action::Fold, Action::Call]
             }
 
             _ => unreachable!("unexpected history: {:?}", state.history),
@@ -349,26 +345,41 @@ impl PreflopGame {
         (opener_inv, defender_inv)
     }
 
+    /// Determine current player dynamically from history.
+    /// Player 0 = opener, Player 1 = defender.
     fn current_player_impl(&self, state: &PreflopState) -> usize {
-        // Player 0 = opener, Player 1 = defender
-        match state.history.as_slice() {
-            [] => 0,
-            [Action::Call] => 1,
-            [Action::Call, Action::Raise(_)] => 0,
-            [Action::Call, Action::AllIn] => 0,
-            [Action::Call, Action::Raise(_), Action::Raise(_)] => 1,
-            [Action::Call, Action::Raise(_), Action::Raise(_), Action::AllIn] => 0,
-            [Action::Call, Action::Raise(_), Action::AllIn] => 1,
-            [Action::Raise(_)] => 1,
-            [Action::Raise(_), Action::Raise(_)] => 0,
-            [Action::Raise(_), Action::AllIn] => 0,
-            [Action::Raise(_), Action::Raise(_), Action::Raise(_)] => 1,
-            [Action::Raise(_), Action::Raise(_), Action::Raise(_), Action::AllIn] => 0,
-            [Action::Raise(_), Action::Raise(_), Action::AllIn] => 1,
-            [Action::AllIn] => 1,
-            _ => unreachable!("unexpected history for current_player: {:?}", state.history),
+        if state.history.is_empty() {
+            return 0; // Opener acts first
+        }
+        let first = &state.history[0];
+        if matches!(first, Action::Call) {
+            // Limp line: opener limps (0), defender acts (1), then alternates on raises
+            // [Call] → 1, [Call,Raise] → 0, [Call,Raise,Raise] → 1, ...
+            // [Call,AllIn] → 0, [Call,Raise,AllIn] → 1, ...
+            let after_limp = &state.history[1..];
+            if after_limp.is_empty() {
+                return 1; // Defender acts after limp
+            }
+            // Count actions after limp (excluding the limp itself)
+            // Defender goes first after limp, then alternates
+            if after_limp.len() % 2 == 0 { 1 } else { 0 }
+        } else {
+            // Open/Raise/AllIn line: opener acts (0), then alternates
+            // [Raise] → 1, [Raise,Raise] → 0, [Raise,Raise,Raise] → 1, ...
+            // [AllIn] → 1, [Raise,AllIn] → 0, ...
+            if state.history.len() % 2 == 0 { 0 } else { 1 }
         }
     }
+}
+
+/// Helper for classifying history.
+#[derive(Debug)]
+enum Line { Open, Limp }
+#[derive(Debug)]
+struct HistoryInfo {
+    line: Line,
+    num_raises: usize,
+    last_action: Option<Action>,
 }
 
 impl Game for PreflopGame {
@@ -389,33 +400,27 @@ impl Game for PreflopGame {
     }
 
     fn is_terminal(&self, state: &PreflopState) -> bool {
-        match state.history.as_slice() {
-            [Action::Fold] => true,
-            [Action::Call, Action::Check] => true,
-            [Action::Call, Action::Raise(_), Action::Fold] => true,
-            [Action::Call, Action::Raise(_), Action::Call] => true,
-            [Action::Call, Action::Raise(_), Action::Raise(_), Action::Fold] => true,
-            [Action::Call, Action::Raise(_), Action::Raise(_), Action::Call] => true,
-            [Action::Call, Action::Raise(_), Action::Raise(_), Action::AllIn, Action::Fold] => true,
-            [Action::Call, Action::Raise(_), Action::Raise(_), Action::AllIn, Action::Call] => true,
-            [Action::Call, Action::Raise(_), Action::AllIn, Action::Fold] => true,
-            [Action::Call, Action::Raise(_), Action::AllIn, Action::Call] => true,
-            [Action::Call, Action::AllIn, Action::Fold] => true,
-            [Action::Call, Action::AllIn, Action::Call] => true,
-            [Action::Raise(_), Action::Fold] => true,
-            [Action::Raise(_), Action::Call] => true,
-            [Action::Raise(_), Action::Raise(_), Action::Fold] => true,
-            [Action::Raise(_), Action::Raise(_), Action::Call] => true,
-            [Action::Raise(_), Action::Raise(_), Action::Raise(_), Action::Fold] => true,
-            [Action::Raise(_), Action::Raise(_), Action::Raise(_), Action::Call] => true,
-            [Action::Raise(_), Action::Raise(_), Action::Raise(_), Action::AllIn, Action::Fold] => true,
-            [Action::Raise(_), Action::Raise(_), Action::Raise(_), Action::AllIn, Action::Call] => true,
-            [Action::Raise(_), Action::Raise(_), Action::AllIn, Action::Fold] => true,
-            [Action::Raise(_), Action::Raise(_), Action::AllIn, Action::Call] => true,
-            [Action::Raise(_), Action::AllIn, Action::Fold] => true,
-            [Action::Raise(_), Action::AllIn, Action::Call] => true,
-            [Action::AllIn, Action::Fold] => true,
-            [Action::AllIn, Action::Call] => true,
+        if state.history.is_empty() {
+            return false;
+        }
+        let last = state.history.last().unwrap();
+        match last {
+            // Fold is always terminal (after at least one action)
+            Action::Fold => state.history.len() >= 1,
+            // Call after a raise/allin is terminal (showdown or fold response)
+            Action::Call => {
+                // Call as first action = limp, not terminal
+                if state.history.len() == 1 {
+                    return false;
+                }
+                // Call after Raise or AllIn = terminal
+                let prev = &state.history[state.history.len() - 2];
+                matches!(prev, Action::Raise(_) | Action::AllIn)
+            }
+            // Check is terminal only in limp line (limp → check = showdown)
+            Action::Check => true,
+            // Raise and AllIn are never terminal
+            Action::Raise(_) | Action::AllIn => false,
             _ => false,
         }
     }
@@ -569,6 +574,19 @@ pub struct PreflopStrategySet {
     pub freqs: Vec<[f64; NUM_CLASSES]>, // one per action
 }
 
+/// Raise level names: 1=Open, 2=3bet, 3=4bet, 4=5bet, ...
+fn raise_level_name(level: usize) -> &'static str {
+    match level {
+        0 => "Open",
+        1 => "3bet",
+        2 => "4bet",
+        3 => "5bet",
+        4 => "6bet",
+        5 => "7bet",
+        _ => "Raise",
+    }
+}
+
 /// Extract all interesting strategy slices from a solved preflop game.
 pub fn extract_preflop_strategies(
     strategy: &gto_cfr::Strategy,
@@ -577,11 +595,6 @@ pub fn extract_preflop_strategies(
     let stack = config.stack_bb;
     let opener_name = config.position.name();
     let defender_name = config.defender.name();
-    let open_r = (config.open_size * 10.0) as u32;
-    let three_bet_r = (config.three_bet_size * 10.0) as u32;
-    let four_bet_r = (config.four_bet_size * 10.0) as u32;
-    let limp_raise_r = (config.limp_raise_size * 10.0) as u32;
-    let limp_reraise_r = (config.limp_reraise_size * 10.0) as u32;
 
     let mut sets = Vec::new();
 
@@ -619,14 +632,16 @@ pub fn extract_preflop_strategies(
 
     // 1. Opener action
     {
+        let open_size = config.raise_size_for_level(0);
+        let open_r = (open_size * 10.0) as u32;
         let mut action_defs: Vec<(Action, &str)> = vec![(Action::Fold, "Fold")];
         if config.can_limp() {
             action_defs.push((Action::Call, "Limp"));
         }
-        action_defs.push((Action::Raise(open_r), &"placeholder"));
+        action_defs.push((Action::Raise(open_r), "placeholder"));
         action_defs.push((Action::AllIn, "AllIn"));
 
-        let open_label = format!("Open({:.1}bb)", config.open_size);
+        let open_label = format!("Open({:.1}bb)", open_size);
         let actions: Vec<(Action, String)> = action_defs
             .iter()
             .filter(|(a, _)| match a {
@@ -652,67 +667,93 @@ pub fn extract_preflop_strategies(
         });
     }
 
-    // 2. Defender vs Open
+    // Dynamic raise line: Open → 3bet → 4bet → 5bet → ...
     {
-        let hist = format!("r{}", open_r);
-        let actions = build_actions(&[
-            (Action::Fold, "Fold"),
-            (Action::Call, "Call"),
-            (Action::Raise(three_bet_r), &format!("3bet({:.0}bb)", config.three_bet_size)),
-            (Action::AllIn, "AllIn"),
-        ]);
-        let freqs = extract_freqs(&hist, &actions);
-        sets.push(PreflopStrategySet {
-            label: format!("{} vs {} Open", defender_name, opener_name),
-            history_prefix: hist,
-            action_names: actions.iter().map(|(_, n)| n.clone()).collect(),
-            freqs,
-        });
+        let max_r = config.effective_max_raises();
+        let mut hist = String::new();
+        let mut raise_amts: Vec<u32> = Vec::new();
+
+        for level in 0.. {
+            let size = config.raise_size_for_level(level);
+            let r = (size * 10.0) as u32;
+            if level == 0 {
+                hist = format!("r{}", r);
+            } else {
+                hist = format!("{}r{}", hist, r);
+            }
+            raise_amts.push(r);
+
+            let num_raises = level + 1;
+            let is_opener = num_raises % 2 == 0; // even raises = opener's turn
+            let player_name = if is_opener { opener_name } else { defender_name };
+
+            // Check if next raise is possible
+            let within_limit = max_r == 0 || num_raises < max_r;
+            let next_size = config.raise_size_for_level(level + 1);
+            let next_r = (next_size * 10.0) as u32;
+            let next_name = raise_level_name(level + 1);
+
+            let mut action_defs: Vec<(Action, String)> = vec![
+                (Action::Fold, "Fold".to_string()),
+                (Action::Call, "Call".to_string()),
+            ];
+            if within_limit && next_size < stack {
+                action_defs.push((Action::Raise(next_r), format!("{}({:.0}bb)", next_name, next_size)));
+            }
+            action_defs.push((Action::AllIn, "AllIn".to_string()));
+
+            let actions: Vec<(Action, String)> = action_defs
+                .into_iter()
+                .filter(|(a, _)| match a {
+                    Action::Raise(amt) => (*amt as f64 / 10.0) < stack,
+                    _ => true,
+                })
+                .collect();
+
+            let freqs = extract_freqs(&hist, &actions);
+
+            // Check if any strategy data exists for this level
+            let has_data = freqs.iter().any(|f| f.iter().any(|&v| v > 0.0));
+            if !has_data && num_raises >= 2 {
+                break;
+            }
+
+            let label = if level == 0 {
+                format!("{} vs {} Open", player_name, if is_opener { defender_name } else { opener_name })
+            } else {
+                let prev_name = raise_level_name(level);
+                if is_opener {
+                    format!("{} vs {}", player_name, prev_name)
+                } else {
+                    format!("{} vs {} {}", player_name, opener_name, prev_name)
+                }
+            };
+
+            sets.push(PreflopStrategySet {
+                label,
+                history_prefix: hist.clone(),
+                action_names: actions.iter().map(|(_, n)| n.clone()).collect(),
+                freqs,
+            });
+
+            // Stop if no further raise is possible
+            if !within_limit || next_size >= stack {
+                break;
+            }
+        }
     }
 
-    // 3. Opener vs 3bet — only when max_raises >= 2
-    if config.max_raises >= 2 {
-        let hist = format!("r{}r{}", open_r, three_bet_r);
-        let actions = build_actions(&[
-            (Action::Fold, "Fold"),
-            (Action::Call, "Call"),
-            (Action::Raise(four_bet_r), &format!("4bet({:.0}bb)", config.four_bet_size)),
-            (Action::AllIn, "AllIn"),
-        ]);
-        let freqs = extract_freqs(&hist, &actions);
-        sets.push(PreflopStrategySet {
-            label: format!("{} vs 3bet", opener_name),
-            history_prefix: hist,
-            action_names: actions.iter().map(|(_, n)| n.clone()).collect(),
-            freqs,
-        });
-    }
-
-    // 4. Defender vs 4bet — only when max_raises >= 3
-    if config.max_raises >= 3 {
-        let hist = format!("r{}r{}r{}", open_r, three_bet_r, four_bet_r);
-        let actions = build_actions(&[
-            (Action::Fold, "Fold"),
-            (Action::Call, "Call"),
-            (Action::AllIn, "AllIn"),
-        ]);
-        let freqs = extract_freqs(&hist, &actions);
-        sets.push(PreflopStrategySet {
-            label: format!("{} vs {} 4bet", defender_name, opener_name),
-            history_prefix: hist,
-            action_names: actions.iter().map(|(_, n)| n.clone()).collect(),
-            freqs,
-        });
-    }
-
-    // 5-6. Limp-related sets (SB vs BB only)
+    // Limp-related sets (SB vs BB only)
     if config.can_limp() {
+        let limp_raise_size = config.limp_raise_size_for_level(0);
+        let limp_raise_r = (limp_raise_size * 10.0) as u32;
+
         // Defender vs Limp
         {
             let hist = "c".to_string();
             let actions = build_actions(&[
                 (Action::Check, "Check"),
-                (Action::Raise(limp_raise_r), &format!("Raise({:.1}bb)", config.limp_raise_size)),
+                (Action::Raise(limp_raise_r), &format!("Raise({:.1}bb)", limp_raise_size)),
                 (Action::AllIn, "AllIn"),
             ]);
             let freqs = extract_freqs(&hist, &actions);
@@ -724,22 +765,52 @@ pub fn extract_preflop_strategies(
             });
         }
 
-        // Opener vs Limp-Raise — only when max_raises >= 2
-        if config.max_raises >= 2 {
-            let hist = format!("cr{}", limp_raise_r);
-            let actions = build_actions(&[
-                (Action::Fold, "Fold"),
-                (Action::Call, "Call"),
-                (Action::Raise(limp_reraise_r), &format!("Reraise({:.0}bb)", config.limp_reraise_size)),
-                (Action::AllIn, "AllIn"),
-            ]);
-            let freqs = extract_freqs(&hist, &actions);
-            sets.push(PreflopStrategySet {
-                label: format!("{} vs Limp-Raise", opener_name),
-                history_prefix: hist,
-                action_names: actions.iter().map(|(_, n)| n.clone()).collect(),
-                freqs,
-            });
+        // Dynamic limp-raise line
+        {
+            let max_r = config.effective_max_raises();
+            let mut hist = format!("cr{}", limp_raise_r);
+            for level in 1.. {
+                let within_limit = max_r == 0 || (level + 1) < max_r;
+                let size = config.limp_raise_size_for_level(level);
+                let r = (size * 10.0) as u32;
+                let is_opener = level % 2 == 1; // odd level = opener
+                let player_name = if is_opener { opener_name } else { defender_name };
+
+                let mut action_defs: Vec<(Action, String)> = vec![
+                    (Action::Fold, "Fold".to_string()),
+                    (Action::Call, "Call".to_string()),
+                ];
+                if within_limit && size < stack {
+                    action_defs.push((Action::Raise(r), format!("Reraise({:.0}bb)", size)));
+                }
+                action_defs.push((Action::AllIn, "AllIn".to_string()));
+
+                let actions: Vec<(Action, String)> = action_defs
+                    .into_iter()
+                    .filter(|(a, _)| match a {
+                        Action::Raise(amt) => (*amt as f64 / 10.0) < stack,
+                        _ => true,
+                    })
+                    .collect();
+
+                let freqs = extract_freqs(&hist, &actions);
+                let has_data = freqs.iter().any(|f| f.iter().any(|&v| v > 0.0));
+                if !has_data && level >= 2 {
+                    break;
+                }
+
+                sets.push(PreflopStrategySet {
+                    label: format!("{} vs Limp-Raise{}", player_name, if level > 1 { format!(" ({})", level) } else { String::new() }),
+                    history_prefix: hist.clone(),
+                    action_names: actions.iter().map(|(_, n)| n.clone()).collect(),
+                    freqs,
+                });
+
+                if !within_limit || size >= stack {
+                    break;
+                }
+                hist = format!("{}r{}", hist, r);
+            }
         }
     }
 
@@ -1393,9 +1464,9 @@ mod tests {
     }
 
     #[test]
-    fn max_raises_3_is_default() {
+    fn max_raises_0_is_default_unlimited() {
         let config = PreflopConfig::for_matchup(100.0, Position::BTN, Position::BB);
-        assert_eq!(config.max_raises, 3);
+        assert_eq!(config.max_raises, 0, "default should be 0 (unlimited)");
     }
 
     #[test]
