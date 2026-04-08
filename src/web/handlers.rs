@@ -879,6 +879,12 @@ pub struct PreflopRequest {
     /// Solve mode: "fast" (MCCFR, ~5s), "balanced" (MCCFR, ~2s), "accurate" (vanilla CFR+, ~3min).
     /// Default: "balanced".
     pub mode: Option<String>,
+    /// Open raise size in bb (default: 2.5).
+    pub open_size: Option<f64>,
+    /// 3-bet size in bb (default: position-dependent 8.0-9.0).
+    pub three_bet_size: Option<f64>,
+    /// 4-bet size in bb (default: position-dependent 20.0-22.0).
+    pub four_bet_size: Option<f64>,
 }
 
 fn default_preflop_stack() -> f64 {
@@ -907,11 +913,29 @@ fn solve_single_matchup<F: FnMut(usize, usize)>(
     iterations: usize,
     chance_sampling: bool,
     max_raises: Option<usize>,
+    open_size: Option<f64>,
+    three_bet_size: Option<f64>,
+    four_bet_size: Option<f64>,
     on_progress: F,
 ) -> Value {
     let mut config = PreflopConfig::for_matchup(stack_bb, opener, defender);
     if let Some(mr) = max_raises {
         config = config.with_max_raises(mr);
+    }
+    if let Some(v) = open_size {
+        if !config.raise_sizes.is_empty() {
+            config.raise_sizes[0] = v;
+        }
+    }
+    if let Some(v) = three_bet_size {
+        if config.raise_sizes.len() > 1 {
+            config.raise_sizes[1] = v;
+        }
+    }
+    if let Some(v) = four_bet_size {
+        if config.raise_sizes.len() > 2 {
+            config.raise_sizes[2] = v;
+        }
     }
     let game = PreflopGame::new(
         config.clone(),
@@ -1096,6 +1120,9 @@ pub async fn start_preflop(
         let mut pos_results = serde_json::Map::new();
         let stack_bb = req.stack_bb;
         let max_raises = req.max_raises;
+        let open_size = req.open_size;
+        let three_bet_size = req.three_bet_size;
+        let four_bet_size = req.four_bet_size;
         for (i, &(opener, defender)) in matchups.iter().enumerate() {
             let base_pct = 15.0 + (i as f64 / num_matchups as f64) * 85.0;
             let step_width = 85.0 / num_matchups as f64;
@@ -1112,7 +1139,7 @@ pub async fn start_preflop(
                 i + 1,
                 num_matchups + 1,
             );
-            let result = solve_single_matchup(&data, stack_bb, opener, defender, iters, chance_sampling, max_raises, |iter, total| {
+            let result = solve_single_matchup(&data, stack_bb, opener, defender, iters, chance_sampling, max_raises, open_size, three_bet_size, four_bet_size, |iter, total| {
                 let iter_pct = base_pct + step_width * (iter as f64 / total as f64);
                 update_progress(
                     &format!("Solving {} vs {} {:.0}bb ({}/{}) - iter {}/{}",

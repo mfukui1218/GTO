@@ -272,10 +272,15 @@ table.range-grid td.selected { background: rgba(35,134,54,0.8) !important; color
         </select>
         <label id="lbl-hf-mode">Mode:</label>
         <select id="hf-mode">
-          <option value="1" selected id="hf-mode-open">Open</option>
-          <option value="2" id="hf-mode-3bet">3bet</option>
           <option value="3" id="hf-mode-full">Full (4bet)</option>
+          <option value="0" selected id="hf-mode-unlimited">Unlimited</option>
         </select>
+        <label id="lbl-hf-open-size">Open:</label>
+        <input type="number" id="hf-open-size" value="2.5" min="2" max="10" step="0.5" style="width:60px;">
+        <label id="lbl-hf-3bet-size">3bet:</label>
+        <input type="number" id="hf-3bet-size" value="" placeholder="auto" min="5" max="30" step="0.5" style="width:60px;">
+        <label id="lbl-hf-4bet-size">4bet:</label>
+        <input type="number" id="hf-4bet-size" value="" placeholder="auto" min="15" max="60" step="1" style="width:60px;">
         <label id="lbl-hf-iter">Iterations:</label>
         <input type="number" id="hf-iter" value="50000" min="5000" step="5000">
         <button class="btn" id="hf-solve-preflop" onclick="hfSolvePreflop()">Solve Preflop</button>
@@ -2622,23 +2627,31 @@ async function hfSolvePreflop() {
   const stackBB = parseFloat(document.getElementById('hf-stack').value);
   const iters = parseInt(document.getElementById('hf-iter').value);
   const maxRaises = parseInt(document.getElementById('hf-mode').value);
+  const openSizeVal = document.getElementById('hf-open-size').value;
+  const threeBetVal = document.getElementById('hf-3bet-size').value;
+  const fourBetVal = document.getElementById('hf-4bet-size').value;
 
   hfState.opener = opener;
   hfState.defender = defender;
   hfState.stackBB = stackBB;
 
+  const body = {
+    stack_bb: stackBB,
+    mc_samples: 2000000,
+    iterations: iters,
+    position: opener,
+    defender: defender,
+    max_raises: maxRaises,
+  };
+  if (openSizeVal) body.open_size = parseFloat(openSizeVal);
+  if (threeBetVal) body.three_bet_size = parseFloat(threeBetVal);
+  if (fourBetVal) body.four_bet_size = parseFloat(fourBetVal);
+
   try {
     const res = await fetch('/api/preflop/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        stack_bb: stackBB,
-        mc_samples: 2000000,
-        iterations: iters,
-        position: opener,
-        defender: defender,
-        max_raises: maxRaises,
-      }),
+      body: JSON.stringify(body),
     });
     const d = await res.json();
     if (d.error) throw new Error(d.error);
