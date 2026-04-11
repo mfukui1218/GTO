@@ -5,5 +5,5 @@ pub mod trainer;
 
 pub use cfr::CfrSolver;
 pub use info_set::{InfoSetKey, InfoSetNode};
-pub use strategy::Strategy;
-pub use trainer::{train, train_with_callback, Game, TrainerConfig};
+pub use strategy::{CompactEntry, CompactStrategy, Strategy};
+pub use trainer::{train, train_on, train_with_callback, Game, TrainerConfig};

@@ -317,6 +317,7 @@ mod tests {
             use_cfr_plus: false,
             use_chance_sampling: false,
             print_interval: 0,
+            ..Default::default()
         };
         let solver = train(&game, &config);
         let strategy = Strategy::from_solver(&solver);
@@ -388,6 +389,7 @@ mod tests {
             use_cfr_plus: false,
             use_chance_sampling: true,
             print_interval: 0,
+            ..Default::default()
         };
         let solver = train(&game, &config);
         let exploit = solver.exploitability(&game);
@@ -396,6 +398,176 @@ mod tests {
             exploit < 0.01,
             "Kuhn CS-MCCFR exploitability {:.6} should be < 0.01",
             exploit
+        );
+    }
+
+    #[test]
+    fn node_locking_fixes_strategy_and_best_responds() {
+        use gto_cfr::{train, CfrSolver, Strategy, TrainerConfig};
+
+        let game = KuhnPoker;
+
+        // Lock P1's "J|x" (J after check) to ALWAYS bet.
+        // In unlocked Nash, this is 1/3 bet (bluff). If P1 is forced to bet J always,
+        // P0 with Q facing a bet should adapt toward calling more (since opponent's
+        // bluff frequency is higher), and the locked node must report exactly [0, 1].
+        //
+        // Use the train path without locks first to get a baseline Q|xb1 call freq,
+        // then train a locked solver and compare.
+        let baseline_tc = TrainerConfig {
+            iterations: 20_000,
+            use_cfr_plus: true,
+            use_chance_sampling: false,
+            print_interval: 0,
+            ..Default::default()
+        };
+        let baseline_solver = train(&game, &baseline_tc);
+        let baseline_strat = Strategy::from_solver(&baseline_solver);
+        let baseline_q_call = baseline_strat.get("Q|xb1").unwrap()[1];
+
+        // Now train with "J|x" locked to always bet.
+        let mut solver = CfrSolver::new();
+        solver.lock_node("J|x", vec![0.0, 1.0]);
+        assert!(solver.is_locked("J|x"));
+
+        for _ in 0..20_000 {
+            solver.iterate_plus(&game);
+        }
+
+        let locked_strat = Strategy::from_solver(&solver);
+
+        // Locked node must report exactly the locked distribution.
+        let j_x_after = locked_strat.get("J|x").unwrap();
+        assert!((j_x_after[0] - 0.0).abs() < 1e-6, "J|x[0] = {}", j_x_after[0]);
+        assert!((j_x_after[1] - 1.0).abs() < 1e-6, "J|x[1] = {}", j_x_after[1]);
+
+        // Q|xb1 call frequency should adapt upward (P1 now bluffs J 100% instead of 33%).
+        // In this modified game P0-Q facing a bet should always call (EV: win 2 vs J, lose 2 vs K = 0 > -1 fold).
+        let locked_q_call = locked_strat.get("Q|xb1").unwrap()[1];
+        assert!(
+            locked_q_call > baseline_q_call + 0.1,
+            "Locked Q|xb1 call {:.3} should exceed baseline {:.3} by at least 0.1",
+            locked_q_call,
+            baseline_q_call
+        );
+        assert!(
+            locked_q_call > 0.8,
+            "Locked Q|xb1 call {:.3} should approach 1.0",
+            locked_q_call
+        );
+
+        // Unlock and confirm the flag clears.
+        solver.unlock_node("J|x");
+        assert!(!solver.is_locked("J|x"));
+    }
+
+    #[test]
+    fn target_exploitability_auto_stops() {
+        // With target_exploitability set, training should halt as soon as the
+        // measured exploitability drops below the target — strictly before
+        // consuming the full iteration budget.
+        use gto_cfr::{train_with_callback, TrainerConfig};
+
+        let game = KuhnPoker;
+        let tc = TrainerConfig {
+            iterations: 200_000,             // large budget — we expect NOT to use it all
+            use_cfr_plus: true,
+            use_chance_sampling: false,
+            print_interval: 0,
+            target_exploitability: Some(0.01),
+            exploitability_check_interval: 200,
+            ..Default::default()
+        };
+
+        // Track the last iteration reported by the progress callback.
+        let mut last_iter = 0usize;
+        let solver = train_with_callback(&game, &tc, |iter, _total| {
+            last_iter = iter;
+        });
+
+        let final_exploit = solver.exploitability(&game);
+        assert!(
+            final_exploit <= 0.01 + 1e-9,
+            "final exploitability {:.6} should be <= target 0.01",
+            final_exploit
+        );
+        assert!(
+            last_iter < tc.iterations,
+            "should have stopped early, but ran full {}/{} iterations",
+            last_iter,
+            tc.iterations,
+        );
+        // And training should have actually made progress (not stopped at iter 0).
+        assert!(last_iter >= tc.exploitability_check_interval);
+    }
+
+    #[test]
+    fn target_exploitability_none_runs_full_iterations() {
+        // Baseline: unset target => full iteration count used.
+        use gto_cfr::{train_with_callback, TrainerConfig};
+
+        let game = KuhnPoker;
+        let tc = TrainerConfig {
+            iterations: 500,
+            use_cfr_plus: true,
+            use_chance_sampling: false,
+            print_interval: 0,
+            target_exploitability: None,
+            ..Default::default()
+        };
+
+        let mut last_iter = 0usize;
+        let _ = train_with_callback(&game, &tc, |iter, _total| {
+            last_iter = iter;
+        });
+        assert_eq!(
+            last_iter, tc.iterations,
+            "with no target, training should run all {} iterations",
+            tc.iterations,
+        );
+    }
+
+    #[test]
+    fn linear_cfr_converges_faster_than_vanilla() {
+        use gto_cfr::{train, TrainerConfig};
+
+        let game = KuhnPoker;
+
+        // Vanilla CFR, 2000 iterations
+        let vanilla_tc = TrainerConfig {
+            iterations: 2_000,
+            use_cfr_plus: false,
+            use_chance_sampling: false,
+            print_interval: 0,
+            ..Default::default()
+        };
+        let vanilla_solver = train(&game, &vanilla_tc);
+        let vanilla_exploit = vanilla_solver.exploitability(&game);
+
+        // Discount CFR (PioSolver preset), same iterations
+        let linear_tc = TrainerConfig {
+            iterations: 2_000,
+            use_cfr_plus: false,
+            use_chance_sampling: false,
+            print_interval: 0,
+            use_linear_cfr: true,
+            ..Default::default()
+        };
+        let linear_solver = train(&game, &linear_tc);
+        let linear_exploit = linear_solver.exploitability(&game);
+
+        // Linear CFR should converge strictly better than vanilla at the same iteration budget.
+        assert!(
+            linear_exploit < vanilla_exploit,
+            "Linear CFR exploit {:.6} should be < vanilla {:.6}",
+            linear_exploit,
+            vanilla_exploit
+        );
+        // And the absolute level should already be tight on Kuhn.
+        assert!(
+            linear_exploit < 0.01,
+            "Linear CFR exploit {:.6} should be < 0.01 after 2k iters",
+            linear_exploit
         );
     }
 }

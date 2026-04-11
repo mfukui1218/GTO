@@ -332,7 +332,7 @@ table.range-grid td.selected { background: rgba(35,134,54,0.8) !important; color
       </div>
       <details style="margin-bottom:16px;">
         <summary style="cursor:pointer;color:#8b949e;font-size:13px;" id="lbl-hf-advanced">Advanced Settings</summary>
-        <div style="display:flex;gap:16px;margin-top:8px;flex-wrap:wrap;">
+        <div style="display:flex;gap:16px;margin-top:8px;flex-wrap:wrap;align-items:flex-end;">
           <div>
             <label id="lbl-hf-max-raises" style="font-size:12px;color:#8b949e;">Max Raises:</label>
             <input type="number" id="hf-max-raises" value="2" min="1" max="4" style="width:60px;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:4px;font-size:12px;">
@@ -340,6 +340,35 @@ table.range-grid td.selected { background: rgba(35,134,54,0.8) !important; color
           <div>
             <label id="lbl-hf-pfs-iter" style="font-size:12px;color:#8b949e;">Iterations:</label>
             <input type="number" id="hf-pfs-iter" value="2000" min="100" max="50000" step="500" style="width:80px;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:4px;font-size:12px;">
+          </div>
+          <div>
+            <label id="lbl-hf-solver" style="font-size:12px;color:#8b949e;">Solver:</label>
+            <select id="hf-solver" style="background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:4px;font-size:12px;">
+              <option value="cfr_plus" selected>CFR+</option>
+              <option value="linear">Linear CFR (faster)</option>
+            </select>
+          </div>
+          <div>
+            <label id="lbl-hf-target-exploit" style="font-size:12px;color:#8b949e;" title="Auto-stop when exploitability drops below this value. Leave empty to run full iterations.">Target Exploit:</label>
+            <input type="number" id="hf-target-exploit" placeholder="off" step="0.01" min="0" style="width:80px;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:4px;font-size:12px;">
+          </div>
+        </div>
+        <div style="display:flex;gap:16px;margin-top:12px;flex-wrap:wrap;align-items:flex-end;">
+          <div>
+            <label id="lbl-hf-subgame" style="font-size:12px;color:#8b949e;" title="Start CFR directly from turn/river instead of solving the full flop tree. Huge speedup for spot analysis.">Subgame Entry:</label>
+            <select id="hf-subgame-mode" style="background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:4px;font-size:12px;" onchange="hfUpdateSubgameInputs()">
+              <option value="flop" selected>Flop (full)</option>
+              <option value="turn">Turn subgame</option>
+              <option value="river">River subgame</option>
+            </select>
+          </div>
+          <div id="hf-subgame-turn-wrap" style="display:none;">
+            <label id="lbl-hf-turn-card" style="font-size:12px;color:#8b949e;">Turn Card:</label>
+            <input type="text" id="hf-turn-card" placeholder="Kd" maxlength="2" style="width:50px;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:4px;font-size:12px;">
+          </div>
+          <div id="hf-subgame-river-wrap" style="display:none;">
+            <label id="lbl-hf-river-card" style="font-size:12px;color:#8b949e;">River Card:</label>
+            <input type="text" id="hf-river-card" placeholder="3s" maxlength="2" style="width:50px;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:4px;font-size:12px;">
           </div>
         </div>
       </details>
@@ -640,6 +669,9 @@ const i18n = {
     hfSolvingPostflop: 'Solving postflop...', hfHandEnd: 'Hand ended (fold)',
     hfAllInNoPostflop: 'All-in (no postflop play)', hfPot: 'Pot', hfEffStack: 'Eff. Stack',
     hfOOPPlayer: 'OOP', hfIPPlayer: 'IP', hfSelectFlop: 'Select at least 3 cards for the flop',
+    hfSolver: 'Solver:', hfTargetExploit: 'Target Exploit:',
+    hfSubgame: 'Subgame Entry:', hfTurnCard: 'Turn Card:', hfRiverCard: 'River Card:',
+    solverAlgo: 'Solver', exploit: 'Exploitability', lockedNodes: 'Locked Nodes',
     descHandFlow: `<b>Hand Flow</b> — Play through a hand from preflop to postflop in a natural flow. Solve preflop GTO, select an action line, derive ranges, deal the flop, and solve postflop.
 <ul><li><b>Setup</b>: Choose opener/defender positions, stack size, and mode</li><li><b>Preflop</b>: View GTO strategy and select the action line to analyze</li><li><b>Flop</b>: Enter board cards and configure postflop solver settings</li><li><b>Results</b>: View postflop GTO strategies per decision point</li></ul>`,
     descPushfold: `Compute <b>Nash equilibrium push/fold charts</b> for short-stack preflop play. The SB can only go all-in (push) or fold. The BB can only call or fold. All 169 hand classes are solved simultaneously using CFR.
@@ -720,6 +752,9 @@ const i18n = {
     hfSolvePostflop: 'ポストフロップ解析', hfSolvingPreflop: 'プリフロップGTOを解析中...',
     hfSolvingPostflop: 'ポストフロップを解析中...', hfHandEnd: 'ハンド終了（フォールド）',
     hfAllInNoPostflop: 'オールイン（ポストフロップ判断なし）', hfPot: 'ポット', hfEffStack: 'エフェクティブスタック',
+    hfSolver: 'ソルバー:', hfTargetExploit: '目標被搾取度:',
+    hfSubgame: 'サブゲーム開始:', hfTurnCard: 'ターン:', hfRiverCard: 'リバー:',
+    solverAlgo: 'ソルバー', exploit: '被搾取度', lockedNodes: 'ロック済みノード',
     hfOOPPlayer: 'OOP', hfIPPlayer: 'IP', hfSelectFlop: 'フロップのカードを3枚以上選択してください',
     descHandFlow: `<b>ハンドフロー</b> — プリフロップからポストフロップまで、ポーカーの自然な流れでGTOを解析します。プリフロップGTOを解析し、アクションラインを選択し、レンジを自動導出し、フロップを入力してポストフロップを解析します。
 <ul><li><b>セットアップ</b>: オープナー/ディフェンダーのポジション、スタック、モードを選択</li><li><b>プリフロップ</b>: GTO戦略を確認し、分析するアクションラインを選択</li><li><b>フロップ</b>: ボードカードを入力し、ポストフロップソルバーの設定を構成</li><li><b>結果</b>: 決定ポイントごとのポストフロップGTO戦略を表示</li></ul>`,
@@ -781,6 +816,13 @@ function setLang(l) {
   document.getElementById('lbl-hf-max-raises').textContent = t('maxRaises');
   document.getElementById('lbl-hf-advanced').textContent = t('advancedSettings');
   document.getElementById('lbl-hf-pfs-iter').textContent = t('iterations');
+  // Phase F new labels
+  const setIf = (id, key) => { const el = document.getElementById(id); if (el) el.textContent = t(key); };
+  setIf('lbl-hf-solver', 'hfSolver');
+  setIf('lbl-hf-target-exploit', 'hfTargetExploit');
+  setIf('lbl-hf-subgame', 'hfSubgame');
+  setIf('lbl-hf-turn-card', 'hfTurnCard');
+  setIf('lbl-hf-river-card', 'hfRiverCard');
   document.getElementById('desc-hand-flow').innerHTML = t('descHandFlow');
   const hfSolveBtn = document.getElementById('hf-solve-preflop');
   if (!hfSolveBtn.disabled) hfSolveBtn.textContent = t('hfSolvePreflop');
@@ -2130,8 +2172,24 @@ function renderPfsResult(result, targetId) {
   // Meta info
   html += `<div class="result-meta">`;
   html += metaItem('Flop', result.flop ? result.flop.join(' ') : '');
-  html += metaItem(t('iterations'), result.iterations?.toLocaleString() || '');
+  // Show iterations_used when set and different from the budget (indicates early stop).
+  const itersUsed = result.iterations_used;
+  const itersBudget = result.iterations;
+  if (itersUsed && itersBudget && itersUsed < itersBudget) {
+    html += metaItem(t('iterations'), `${itersUsed.toLocaleString()} / ${itersBudget.toLocaleString()} (early stop)`);
+  } else {
+    html += metaItem(t('iterations'), itersBudget?.toLocaleString() || '');
+  }
   html += metaItem(t('infoSets'), result.num_info_sets?.toLocaleString() || '');
+  if (result.solver) {
+    html += metaItem(t('solverAlgo'), result.solver);
+  }
+  if (typeof result.exploitability === 'number') {
+    html += metaItem(t('exploit'), result.exploitability.toFixed(4));
+  }
+  if (result.num_locked_nodes && result.num_locked_nodes > 0) {
+    html += metaItem(t('lockedNodes'), result.num_locked_nodes);
+  }
   html += `</div>`;
 
   if (!result.strategies || result.strategies.length === 0) {
@@ -3164,6 +3222,14 @@ function hfOnBetPreset(side) {
   }
 }
 
+function hfUpdateSubgameInputs() {
+  const mode = document.getElementById('hf-subgame-mode').value;
+  const turnWrap = document.getElementById('hf-subgame-turn-wrap');
+  const riverWrap = document.getElementById('hf-subgame-river-wrap');
+  turnWrap.style.display = (mode === 'turn' || mode === 'river') ? '' : 'none';
+  riverWrap.style.display = (mode === 'river') ? '' : 'none';
+}
+
 async function hfSolvePostflop() {
   const btn = document.getElementById('hf-solve-postflop');
   const progressDiv = document.getElementById('hf-flop-progress');
@@ -3189,6 +3255,36 @@ async function hfSolvePostflop() {
   const oopBets = parseSizes(oopBetStr);
   const ipBets = parseSizes(ipBetStr);
 
+  // Solver mode (CFR+ / Linear CFR)
+  const solverMode = document.getElementById('hf-solver').value;
+  const useLinearCfr = solverMode === 'linear';
+
+  // Optional early-stop exploitability
+  const targetExploitStr = document.getElementById('hf-target-exploit').value.trim();
+  const targetExploit = targetExploitStr === '' ? null : parseFloat(targetExploitStr);
+
+  // Optional subgame entry (turn/river card)
+  const subgameMode = document.getElementById('hf-subgame-mode').value;
+  let turnCard = null, riverCard = null;
+  if (subgameMode === 'turn' || subgameMode === 'river') {
+    turnCard = document.getElementById('hf-turn-card').value.trim() || null;
+    if (subgameMode === 'river') {
+      riverCard = document.getElementById('hf-river-card').value.trim() || null;
+    }
+    if (!turnCard) {
+      progressDiv.innerHTML = `<div class="error">Subgame mode requires a turn card (e.g. "Kd")</div>`;
+      btn.disabled = false;
+      btn.textContent = t('hfSolvePostflop');
+      return;
+    }
+    if (subgameMode === 'river' && !riverCard) {
+      progressDiv.innerHTML = `<div class="error">River subgame requires both turn and river cards</div>`;
+      btn.disabled = false;
+      btn.textContent = t('hfSolvePostflop');
+      return;
+    }
+  }
+
   try {
     const res = await fetch('/api/postflop-solve/start', {
       method: 'POST',
@@ -3202,6 +3298,10 @@ async function hfSolvePostflop() {
         ip_bet_sizes: [ipBets, ipBets, ipBets],
         max_raises: maxRaises,
         iterations,
+        use_linear_cfr: useLinearCfr,
+        target_exploitability: targetExploit,
+        turn_card: turnCard,
+        river_card: riverCard,
       }),
     });
     const data = await res.json();

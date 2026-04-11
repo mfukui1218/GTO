@@ -408,7 +408,7 @@ pub fn extract_push_range(strategy: &gto_cfr::Strategy) -> [f64; NUM_CLASSES] {
         let name = class_index_to_name(i);
         if let Some(probs) = strategy.get(&name) {
             // Actions: [Fold, AllIn]
-            freqs[i] = probs[1]; // AllIn frequency
+            freqs[i] = probs[1] as f64; // AllIn frequency
         }
     }
     freqs
@@ -421,7 +421,7 @@ pub fn extract_call_range(strategy: &gto_cfr::Strategy) -> [f64; NUM_CLASSES] {
         let name = format!("{}|a", class_index_to_name(i));
         if let Some(probs) = strategy.get(&name) {
             // Actions: [Fold, Call]
-            freqs[i] = probs[1]; // Call frequency
+            freqs[i] = probs[1] as f64; // Call frequency
         }
     }
     freqs
@@ -519,6 +519,7 @@ mod tests {
             use_cfr_plus: false,
             use_chance_sampling: false,
             print_interval: 0,
+            ..Default::default()
         };
         let solver = train(&game, &config);
         let exploit = solver.exploitability(&game);
@@ -551,6 +552,7 @@ mod tests {
             use_cfr_plus: true,
             use_chance_sampling: true,
             print_interval: 0,
+            ..Default::default()
         };
         let solver = train(&game, &config);
         let exploit = solver.exploitability(&game);

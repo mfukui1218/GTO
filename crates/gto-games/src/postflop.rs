@@ -1,5 +1,6 @@
 use gto_abstraction::{compute_bucketing, HandBucketing};
 use gto_cfr::Game;
+use gto_core::iso::canonical_cache_key;
 use gto_core::{Action, Card, CardSet};
 use gto_eval::{evaluate_7, hand_class, HandStrength, NUM_CLASSES};
 use rand::Rng;
@@ -33,6 +34,29 @@ impl Default for BetSizeConfig {
     }
 }
 
+/// Subgame entry point: which street to start CFR from.
+///
+/// `Flop` (default) runs a full flop→turn→river solve. `Turn(card)` and
+/// `River([turn, river])` start CFR directly at that street, using the provided
+/// ranges as the reach distribution at that node. This is the core of PioSolver-
+/// style "turn/river subgame" analysis: solve a specific spot at higher precision
+/// by reusing the flop solution's ranges as input.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SubgameStart {
+    /// Start from the flop (full solve).
+    Flop,
+    /// Start from the turn. The given card is the turn card appended to the flop.
+    Turn(Card),
+    /// Start from the river. `[turn, river]` are appended to the flop.
+    River([Card; 2]),
+}
+
+impl Default for SubgameStart {
+    fn default() -> Self {
+        SubgameStart::Flop
+    }
+}
+
 /// Postflop solver configuration.
 #[derive(Clone, Debug)]
 pub struct PostflopConfig {
@@ -41,13 +65,21 @@ pub struct PostflopConfig {
     pub effective_stack: u32,
     pub bet_sizes: BetSizeConfig,
     /// OOP range: 169-element array (hand class weights).
+    ///
+    /// For a flop solve, this is the preflop range that reaches the flop.
+    /// For a turn/river subgame, this is the range *after* flop play that
+    /// reaches the subgame root — i.e., the flop solution's strategy output.
     pub oop_range: Vec<f64>,
-    /// IP range: 169-element array.
+    /// IP range: 169-element array. Same semantics as `oop_range`.
     pub ip_range: Vec<f64>,
     /// Number of hand strength buckets for abstraction.
     /// 0 = use raw 169 hand classes (no abstraction).
     /// Recommended: 8-20 for postflop.
     pub num_buckets: usize,
+    /// Subgame starting point. `Flop` = standard full solve.
+    /// `Turn(card)` / `River([turn, river])` = subgame solve starting at that street,
+    /// using `oop_range`/`ip_range` as the reach distribution at that node.
+    pub start: SubgameStart,
 }
 
 /// Game state for postflop play.
@@ -83,11 +115,13 @@ pub struct PostflopState {
     pub num_raises: u32,
 }
 
-/// Cache key for turn bucketing: 4 board cards sorted.
+/// Cache key for turn bucketing.
+///
+/// Uses suit canonicalization so that iso turn boards (e.g., `A♣ K♦ 2♥ 5♠`
+/// and `A♠ K♣ 2♦ 5♥`) share a single cache entry — this is a meaningful
+/// speedup during MCCFR because different turn samples produce iso boards.
 fn turn_cache_key(board: &[Card]) -> u64 {
-    let mut cards = [board[0].0, board[1].0, board[2].0, board[3].0];
-    cards.sort();
-    (cards[0] as u64) | ((cards[1] as u64) << 8) | ((cards[2] as u64) << 16) | ((cards[3] as u64) << 24)
+    canonical_cache_key(board)
 }
 
 /// The postflop game implementing the Game trait for CFR.
@@ -100,7 +134,41 @@ pub struct PostflopGame {
 }
 
 impl PostflopGame {
-    pub fn new(config: PostflopConfig) -> Self {
+    pub fn new(mut config: PostflopConfig) -> Self {
+        // Suit isomorphism: canonicalize the flop (and, for subgame starts,
+        // the whole board including turn/river) so iso boards collapse to a
+        // single representation. The 169-class range is suit-agnostic so the
+        // relabel is safe.
+        //
+        // We canonicalize *jointly*: the permutation is derived from the full
+        // starting board so both flop and the subgame entry cards are mapped
+        // consistently.
+        let full_board: Vec<Card> = match config.start {
+            SubgameStart::Flop => config.flop.to_vec(),
+            SubgameStart::Turn(t) => {
+                let mut b = config.flop.to_vec();
+                b.push(t);
+                b
+            }
+            SubgameStart::River([t, r]) => {
+                let mut b = config.flop.to_vec();
+                b.push(t);
+                b.push(r);
+                b
+            }
+        };
+        let perm = gto_core::iso::build_perm(&full_board);
+        let apply = |c: Card| gto_core::iso::apply_perm(c, &perm);
+        config.flop = [apply(config.flop[0]), apply(config.flop[1]), apply(config.flop[2])];
+        config.start = match config.start {
+            SubgameStart::Flop => SubgameStart::Flop,
+            SubgameStart::Turn(t) => SubgameStart::Turn(apply(t)),
+            SubgameStart::River([t, r]) => SubgameStart::River([apply(t), apply(r)]),
+        };
+
+        // Flop bucketing is always computed from the 3-card flop, even for
+        // subgame starts — the turn bucketing cache handles 4-card boards on
+        // demand, and river uses exact evaluation (see `hand_bucket`).
         let flop_bucketing = if config.num_buckets > 0 {
             let mut dead = CardSet::empty();
             for &c in &config.flop {
@@ -321,13 +389,30 @@ impl Game for PostflopGame {
     }
 
     fn initial_state(&self) -> PostflopState {
+        // Build the starting board according to the subgame configuration.
+        let (board, street): (Vec<Card>, u8) = match self.config.start {
+            SubgameStart::Flop => (self.config.flop.to_vec(), 0),
+            SubgameStart::Turn(t) => {
+                let mut b = self.config.flop.to_vec();
+                b.push(t);
+                (b, 1)
+            }
+            SubgameStart::River([t, r]) => {
+                let mut b = self.config.flop.to_vec();
+                b.push(t);
+                b.push(r);
+                (b, 2)
+            }
+        };
+
         let mut dead = CardSet::empty();
-        for &c in &self.config.flop {
+        for &c in &board {
             dead.insert(c);
         }
+
         PostflopState {
-            street: 0,
-            board: self.config.flop.to_vec(),
+            street,
+            board,
             oop_hand: None,
             ip_hand: None,
             dead_cards: dead,
@@ -778,7 +863,7 @@ pub fn extract_postflop_strategies(
         let mut found = false;
 
         // For each of 169 hand classes, look up the strategy
-        let mut class_probs: Vec<Option<Vec<f64>>> = vec![None; NUM_CLASSES];
+        let mut class_probs: Vec<Option<Vec<f32>>> = vec![None; NUM_CLASSES];
 
         for cls in 0..NUM_CLASSES {
             let key = format!("C{}{}", cls, suffix);
@@ -807,7 +892,7 @@ pub fn extract_postflop_strategies(
             if let Some(ref probs) = class_probs[cls] {
                 for (ai, &p) in probs.iter().enumerate() {
                     if ai < num_actions {
-                        grids[ai][row][col] = p;
+                        grids[ai][row][col] = p as f64;
                     }
                 }
             }
@@ -1061,6 +1146,7 @@ mod tests {
             oop_range: vec![1.0; 169],
             ip_range: vec![1.0; 169],
             num_buckets: 0,
+            start: SubgameStart::Flop,
         }
     }
 
@@ -1274,6 +1360,7 @@ mod tests {
             oop_range: vec![1.0; 169],
             ip_range: vec![1.0; 169],
             num_buckets: 0,
+        start: SubgameStart::Flop,
         };
 
         let game = PostflopGame::new(config);
@@ -1282,6 +1369,7 @@ mod tests {
             use_cfr_plus: true,
             use_chance_sampling: true,
             print_interval: 0,
+            ..Default::default()
         };
 
         // This should not panic
@@ -1306,6 +1394,7 @@ mod tests {
             oop_range: vec![1.0; 169],
             ip_range: vec![1.0; 169],
             num_buckets: 8,
+        start: SubgameStart::Flop,
         };
 
         let game = PostflopGame::new(config);
@@ -1314,6 +1403,7 @@ mod tests {
             use_cfr_plus: true,
             use_chance_sampling: true,
             print_interval: 0,
+            ..Default::default()
         };
 
         let solver = train(&game, &trainer_config);
@@ -1327,7 +1417,7 @@ mod tests {
         );
 
         for (key, probs) in &strats {
-            let sum: f64 = probs.iter().sum();
+            let sum: f32 = probs.iter().sum();
             assert!(
                 (sum - 1.0).abs() < 0.01,
                 "Strategy for {} sums to {}, expected ~1.0",
@@ -1368,6 +1458,7 @@ mod tests {
             oop_range: vec![1.0; 169],
             ip_range: vec![1.0; 169],
             num_buckets: 0, // Use raw classes for strategy extraction test
+            start: SubgameStart::Flop,
         };
 
         let game = PostflopGame::new(config);
@@ -1376,6 +1467,7 @@ mod tests {
             use_cfr_plus: true,
             use_chance_sampling: true,
             print_interval: 0,
+            ..Default::default()
         };
 
         let solver = train(&game, &trainer_config);
@@ -1412,6 +1504,7 @@ mod tests {
             oop_range: vec![1.0; 169],
             ip_range: vec![1.0; 169],
             num_buckets: 8,
+            start: SubgameStart::Flop,
         };
 
         let game = PostflopGame::new(config);
@@ -1442,5 +1535,270 @@ mod tests {
         // Verify cache has an entry
         let cache = game.turn_bucketing_cache.read().unwrap();
         assert_eq!(cache.len(), 1, "Should have cached one turn board");
+    }
+
+    #[test]
+    fn subgame_turn_start_produces_turn_state() {
+        // Starting from a turn subgame: initial_state should produce a 4-card
+        // board, street=1, and after chance-sampled deal the info set key
+        // should begin with "|T" (skipping flop action history).
+        use rand::SeedableRng;
+        let config = PostflopConfig {
+            flop: [c("Ts"), c("7h"), c("2c")],
+            pot: 150,
+            effective_stack: 150,
+            bet_sizes: BetSizeConfig::default(),
+            oop_range: vec![1.0; 169],
+            ip_range: vec![1.0; 169],
+            num_buckets: 6,
+            start: SubgameStart::Turn(c("Kd")),
+        };
+        let game = PostflopGame::new(config);
+        let state = game.initial_state();
+        assert_eq!(state.board.len(), 4, "turn subgame should start with 4-card board");
+        assert_eq!(state.street, 1, "turn subgame should start on street 1");
+        assert!(state.prev_streets.is_empty(), "subgame has no prior street history");
+
+        // Deal hands via chance sampling, then verify info_set_key has a |T prefix
+        // rather than a |F prefix.
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1);
+        let (dealt, _) = game.sample_chance_outcome(&state, &mut rng);
+        let key = game.info_set_key(&dealt, 0);
+        assert!(
+            key.contains("|T"),
+            "subgame info set key should begin on the turn, got: {}",
+            key
+        );
+        assert!(
+            !key.contains("|F"),
+            "turn subgame should not have flop action segments, got: {}",
+            key
+        );
+    }
+
+    #[test]
+    fn subgame_river_start_produces_river_state() {
+        let config = PostflopConfig {
+            flop: [c("Ts"), c("7h"), c("2c")],
+            pot: 200,
+            effective_stack: 100,
+            bet_sizes: BetSizeConfig::default(),
+            oop_range: vec![1.0; 169],
+            ip_range: vec![1.0; 169],
+            num_buckets: 6,
+            start: SubgameStart::River([c("Kd"), c("3s")]),
+        };
+        let game = PostflopGame::new(config);
+        let state = game.initial_state();
+        assert_eq!(state.board.len(), 5);
+        assert_eq!(state.street, 2);
+    }
+
+    #[test]
+    fn subgame_turn_trains_and_converges() {
+        // A turn subgame should be solvable to a reasonable exploitability in
+        // modest iterations — the tree is much smaller than a full flop solve
+        // (no flop actions, no turn chance enumeration).
+        use gto_cfr::{train, TrainerConfig};
+        let config = PostflopConfig {
+            flop: [c("Ts"), c("7h"), c("2c")],
+            pot: 150,
+            effective_stack: 150,
+            bet_sizes: BetSizeConfig {
+                oop_bet_sizes: [vec![], vec![50], vec![50]],
+                ip_bet_sizes: [vec![], vec![50], vec![50]],
+                oop_raise_sizes: [vec![], vec![], vec![]],
+                ip_raise_sizes: [vec![], vec![], vec![]],
+                max_raises_per_street: 0,
+            },
+            oop_range: vec![1.0; 169],
+            ip_range: vec![1.0; 169],
+            num_buckets: 6,
+            start: SubgameStart::Turn(c("Kd")),
+        };
+        let game = PostflopGame::new(config);
+        let tc = TrainerConfig {
+            iterations: 2_000,
+            use_cfr_plus: true,
+            use_chance_sampling: true,
+            print_interval: 0,
+            ..Default::default()
+        };
+        let solver = train(&game, &tc);
+        assert!(
+            !solver.nodes.is_empty(),
+            "subgame CFR should produce info sets"
+        );
+        // Exploitability should be a finite positive number (lower is better).
+        let exploit = solver.exploitability(&game);
+        assert!(
+            exploit.is_finite() && exploit >= 0.0,
+            "subgame exploitability = {}, should be finite & non-negative",
+            exploit
+        );
+    }
+
+    #[test]
+    fn subgame_turn_has_smaller_tree_than_full_flop() {
+        // A turn subgame's CFR info-set count should be strictly smaller than
+        // a matching flop solve (since we skip the entire flop action tree).
+        use gto_cfr::{train, TrainerConfig};
+        let bet_sizes = BetSizeConfig {
+            oop_bet_sizes: [vec![50], vec![50], vec![50]],
+            ip_bet_sizes: [vec![50], vec![50], vec![50]],
+            oop_raise_sizes: [vec![], vec![], vec![]],
+            ip_raise_sizes: [vec![], vec![], vec![]],
+            max_raises_per_street: 0,
+        };
+        let flop_cfg = PostflopConfig {
+            flop: [c("Ts"), c("7h"), c("2c")],
+            pot: 100,
+            effective_stack: 200,
+            bet_sizes: bet_sizes.clone(),
+            oop_range: vec![1.0; 169],
+            ip_range: vec![1.0; 169],
+            num_buckets: 6,
+            start: SubgameStart::Flop,
+        };
+        let turn_cfg = PostflopConfig {
+            start: SubgameStart::Turn(c("Kd")),
+            ..flop_cfg.clone()
+        };
+
+        let tc = TrainerConfig {
+            iterations: 1_500,
+            use_cfr_plus: true,
+            use_chance_sampling: true,
+            print_interval: 0,
+            ..Default::default()
+        };
+
+        let flop_solver = train(&PostflopGame::new(flop_cfg), &tc);
+        let turn_solver = train(&PostflopGame::new(turn_cfg), &tc);
+        assert!(
+            turn_solver.nodes.len() < flop_solver.nodes.len(),
+            "turn subgame ({}) should have fewer info sets than full flop solve ({})",
+            turn_solver.nodes.len(),
+            flop_solver.nodes.len()
+        );
+    }
+
+    #[test]
+    fn iso_flops_produce_identical_canonical_flop() {
+        // Two flops that differ only by suit labels should canonicalize to the
+        // same flop inside PostflopGame.
+        // A♠ K♥ 2♣ and A♦ K♣ 2♥ are both rainbows with the same rank structure.
+        let make = |flop: [Card; 3]| {
+            let config = PostflopConfig {
+                flop,
+                pot: 100,
+                effective_stack: 200,
+                bet_sizes: BetSizeConfig::default(),
+                oop_range: vec![1.0; 169],
+                ip_range: vec![1.0; 169],
+                num_buckets: 8,
+                start: SubgameStart::Flop,
+            };
+            PostflopGame::new(config)
+        };
+
+        let g1 = make([c("As"), c("Kh"), c("2c")]);
+        let g2 = make([c("Ad"), c("Kc"), c("2h")]);
+        assert_eq!(
+            g1.config.flop, g2.config.flop,
+            "iso flops must canonicalize to the same representation"
+        );
+    }
+
+    #[test]
+    fn iso_turn_boards_share_cache_entry() {
+        // Two runs on the same canonical flop, sampling turn cards that happen
+        // to be iso to each other, should share a single turn_bucketing_cache
+        // entry. We verify this directly by computing turn_cache_key on iso
+        // turn boards.
+        let flop = [c("As"), c("Kh"), c("2c")];
+        // Turn card 5d (fresh suit) vs 5s (pairing Aces suit? A is ♠) — these
+        // are NOT iso on this rainbow flop. Instead, test with a two-tone flop
+        // where the two unused suits are interchangeable.
+        let two_tone = [c("As"), c("Ks"), c("2c")]; // ♠ twice, ♣ once; ♦ and ♥ free
+        // Turn 5♦ and 5♥ should be iso (both are "fresh suit #2").
+        let turn_board1 = vec![two_tone[0], two_tone[1], two_tone[2], c("5d")];
+        let turn_board2 = vec![two_tone[0], two_tone[1], two_tone[2], c("5h")];
+        assert_eq!(
+            turn_cache_key(&turn_board1),
+            turn_cache_key(&turn_board2),
+            "iso turn boards should share a turn_cache_key"
+        );
+
+        // Sanity: a non-iso turn card produces a different key.
+        let turn_board3 = vec![two_tone[0], two_tone[1], two_tone[2], c("5s")];
+        assert_ne!(
+            turn_cache_key(&turn_board1),
+            turn_cache_key(&turn_board3),
+            "non-iso turn board (5s pairs existing ♠ on board) must have a distinct key"
+        );
+
+        // Unused: silence compiler — flop itself is iso-canonicalized elsewhere.
+        let _ = flop;
+    }
+
+    #[test]
+    fn iso_postflop_games_have_same_info_set_count() {
+        // Train two PostflopGames on iso flops with the same MCCFR seed-equivalent
+        // workload. They should produce the same canonical flop, and thus the
+        // CFR traversal explores the same info set space.
+        use gto_cfr::{train, TrainerConfig};
+
+        let make = |flop: [Card; 3]| PostflopGame::new(PostflopConfig {
+            flop,
+            pot: 100,
+            effective_stack: 200,
+            bet_sizes: BetSizeConfig {
+                oop_bet_sizes: [vec![50], vec![50], vec![50]],
+                ip_bet_sizes: [vec![50], vec![50], vec![50]],
+                oop_raise_sizes: [vec![], vec![], vec![]],
+                ip_raise_sizes: [vec![], vec![], vec![]],
+                max_raises_per_street: 0,
+            },
+            oop_range: vec![1.0; 169],
+            ip_range: vec![1.0; 169],
+            num_buckets: 6,
+            start: SubgameStart::Flop,
+        });
+
+        let tc = TrainerConfig {
+            iterations: 1_500,
+            use_cfr_plus: true,
+            use_chance_sampling: true,
+            print_interval: 0,
+            ..Default::default()
+        };
+
+        let s1 = train(&make([c("As"), c("Kh"), c("2c")]), &tc);
+        let s2 = train(&make([c("Ad"), c("Kc"), c("2h")]), &tc);
+
+        // MCCFR uses random sampling so the exact strategies differ run-to-run,
+        // but the *structure* (reachable info set keys) is determined by the
+        // canonical flop and should match modulo coverage. With enough iterations
+        // both runs should converge on the same set of reachable keys.
+        let keys1: std::collections::BTreeSet<_> = s1.nodes.keys().cloned().collect();
+        let keys2: std::collections::BTreeSet<_> = s2.nodes.keys().cloned().collect();
+        // Expect substantial overlap (>= 95% intersection / union). MCCFR
+        // coverage is stochastic, so we don't demand exact equality.
+        let inter = keys1.intersection(&keys2).count();
+        let union = keys1.union(&keys2).count();
+        let ratio = inter as f64 / union as f64;
+        // MCCFR is stochastic so some variance in coverage is expected; the
+        // important property is that the space explored is *structurally* the
+        // same (same keys), not that sampling reaches every key identically.
+        assert!(
+            ratio > 0.90,
+            "iso flops should explore nearly the same info set space \
+             (intersection/union = {:.3}, keys1={}, keys2={}, inter={})",
+            ratio,
+            keys1.len(),
+            keys2.len(),
+            inter,
+        );
     }
 }

@@ -16,6 +16,7 @@ fn bench_kuhn_cfr(c: &mut Criterion) {
                 use_cfr_plus: false,
                 use_chance_sampling: false,
                 print_interval: 0,
+                ..Default::default()
             };
             train(black_box(&game), black_box(&config))
         })
@@ -29,6 +30,7 @@ fn bench_kuhn_cfr(c: &mut Criterion) {
                 use_cfr_plus: true,
                 use_chance_sampling: false,
                 print_interval: 0,
+                ..Default::default()
             };
             train(black_box(&game), black_box(&config))
         })
@@ -49,6 +51,7 @@ fn bench_leduc_cfr(c: &mut Criterion) {
                 use_cfr_plus: true,
                 use_chance_sampling: true,
                 print_interval: 0,
+                ..Default::default()
             };
             train(black_box(&game), black_box(&config))
         })
@@ -86,6 +89,7 @@ fn bench_pushfold_cfr(c: &mut Criterion) {
                 use_cfr_plus: true,
                 use_chance_sampling: true,
                 print_interval: 0,
+                ..Default::default()
             };
             train(black_box(&game), black_box(&config))
         })
@@ -105,6 +109,7 @@ fn bench_exploitability(c: &mut Criterion) {
         use_cfr_plus: true,
         use_chance_sampling: false,
         print_interval: 0,
+        ..Default::default()
     };
     let solver = train(&game, &config);
 

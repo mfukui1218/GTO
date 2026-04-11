@@ -622,7 +622,7 @@ pub fn extract_preflop_strategies(
             if let Some(probs) = strategy.get(&key) {
                 for (ai, _) in actions.iter().enumerate() {
                     if ai < probs.len() {
-                        freqs[ai][i] = probs[ai];
+                        freqs[ai][i] = probs[ai] as f64;
                     }
                 }
             }
@@ -1295,6 +1295,7 @@ mod tests {
             use_cfr_plus: true,
             use_chance_sampling: false,
             print_interval: 0,
+            ..Default::default()
         };
         let solver = train(&game, &tc);
         let exploit = solver.exploitability(&game);
@@ -1307,7 +1308,7 @@ mod tests {
 
         let strategy = gto_cfr::Strategy::from_solver(&solver);
         if let Some(probs) = strategy.get("AA") {
-            let fold_freq = probs[0];
+            let fold_freq = probs[0] as f64;
             assert!(
                 fold_freq < 0.05,
                 "AA fold freq = {:.4}, should be < 0.05",
@@ -1328,6 +1329,7 @@ mod tests {
             use_cfr_plus: true,
             use_chance_sampling: false,
             print_interval: 0,
+            ..Default::default()
         };
         let solver = train(&game, &tc);
         let _strategy = gto_cfr::Strategy::from_solver(&solver);
@@ -1346,6 +1348,7 @@ mod tests {
             use_cfr_plus: true,
             use_chance_sampling: false,
             print_interval: 0,
+            ..Default::default()
         };
         let solver = train(&game, &tc);
         let _strategy = gto_cfr::Strategy::from_solver(&solver);
@@ -1364,6 +1367,7 @@ mod tests {
             use_cfr_plus: true,
             use_chance_sampling: false,
             print_interval: 0,
+            ..Default::default()
         };
         let solver = train(&game, &tc);
         let _strategy = gto_cfr::Strategy::from_solver(&solver);
@@ -1457,6 +1461,7 @@ mod tests {
             use_cfr_plus: true,
             use_chance_sampling: false,
             print_interval: 0,
+            ..Default::default()
         };
         let solver = train(&game, &tc);
         let _strategy = gto_cfr::Strategy::from_solver(&solver);
@@ -1482,6 +1487,7 @@ mod tests {
             use_cfr_plus: true,
             use_chance_sampling: false,
             print_interval: 0,
+            ..Default::default()
         };
         let solver = train(&game, &tc);
         let strategy = Strategy::from_solver(&solver);
@@ -1501,6 +1507,7 @@ mod tests {
             use_cfr_plus: true,
             use_chance_sampling: false,
             print_interval: 0,
+            ..Default::default()
         };
 
         let results = solve_all_matchups(25.0, &data, &tc);
@@ -1533,6 +1540,7 @@ mod tests {
             use_cfr_plus: true,
             use_chance_sampling: false,
             print_interval: 0,
+            ..Default::default()
         };
 
         let results = solve_all_matchups(25.0, &data, &tc);

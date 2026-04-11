@@ -64,6 +64,7 @@ fn run_kuhn() {
         use_cfr_plus: false,
         use_chance_sampling: false,
         print_interval: 20_000,
+        ..Default::default()
     };
 
     let solver = train(&game, &config);
@@ -119,6 +120,7 @@ fn run_leduc() {
         use_cfr_plus: false,
         use_chance_sampling: false,
         print_interval: 20_000,
+        ..Default::default()
     };
 
     let solver = train(&game, &config);
@@ -240,6 +242,7 @@ fn run_push_fold() {
             use_cfr_plus: false,
             use_chance_sampling: true,
             print_interval: 0,
+            ..Default::default()
         };
 
         let solver = train(&game, &config);
@@ -292,6 +295,7 @@ fn run_preflop(mode: &str) {
                 use_cfr_plus: true,
                 use_chance_sampling: chance_sampling,
                 print_interval: 0,
+                ..Default::default()
             };
 
             let solver = train(&game, &tc);

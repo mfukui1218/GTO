@@ -5,7 +5,7 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use gto_cfr::{train, train_with_callback, Strategy, TrainerConfig};
+use gto_cfr::{train, train_on, train_with_callback, CfrSolver, Strategy, TrainerConfig};
 use gto_core::Card;
 use gto_eval::{
     board_texture, category_name, equity_exact, hand_class_name, hand_vs_range_equity,
@@ -19,7 +19,7 @@ use gto_games::push_fold::{
     class_index_to_name, extract_call_range, extract_push_range, PushFoldData, PushFoldGame,
 };
 use gto_games::postflop::{
-    extract_postflop_strategies, BetSizeConfig, PostflopConfig, PostflopGame,
+    extract_postflop_strategies, BetSizeConfig, PostflopConfig, PostflopGame, SubgameStart,
 };
 use gto_games::{KuhnPoker, LeducHoldem};
 
@@ -82,6 +82,7 @@ pub async fn solve_kuhn(
             use_cfr_plus: req.cfr_plus.unwrap_or(false),
             use_chance_sampling: false,
             print_interval: 0,
+            ..Default::default()
         };
         let solver = train(&game, &config);
         let strategy = Strategy::from_solver(&solver);
@@ -157,6 +158,7 @@ pub async fn solve_leduc(
             use_cfr_plus: req.cfr_plus.unwrap_or(false),
             use_chance_sampling: false,
             print_interval: 0,
+            ..Default::default()
         };
         let solver = train(&game, &config);
         let strategy = Strategy::from_solver(&solver);
@@ -469,6 +471,7 @@ pub async fn start_pushfold(
                 use_cfr_plus: false,
                 use_chance_sampling: true,
                 print_interval: 0,
+                ..Default::default()
             };
 
             let solver = train_with_callback(&game, &config, |iter, total| {
@@ -947,6 +950,7 @@ fn solve_single_matchup<F: FnMut(usize, usize)>(
         use_cfr_plus: true,
         use_chance_sampling: chance_sampling,
         print_interval: 0,
+        ..Default::default()
     };
 
     let solver = train_with_callback(&game, &tc, on_progress);
@@ -1321,6 +1325,24 @@ pub struct PostflopSolveRequest {
     pub ip_raise_sizes: Option<Vec<Vec<u32>>>,
     pub max_raises: Option<usize>,
     pub iterations: Option<usize>,
+    /// Optional node locks: map from information-set key to fixed strategy
+    /// (action probabilities). Used for "what if opponent plays X?" analysis.
+    pub locked_nodes: Option<std::collections::HashMap<String, Vec<f32>>>,
+    /// Optional turn card to start a **turn subgame**. When set, CFR starts
+    /// directly on the turn using `oop_range`/`ip_range` as the turn-reaching
+    /// distribution. Pass as 2-character string like `"Kd"`.
+    pub turn_card: Option<String>,
+    /// Optional river card for a **river subgame**. If set, `turn_card` must
+    /// also be set; CFR starts on the river with both cards appended to the flop.
+    pub river_card: Option<String>,
+    /// Enable Discount (Linear) CFR — converges ~10-100x faster on same iteration budget.
+    pub use_linear_cfr: Option<bool>,
+    /// Early-stop target exploitability. When set, training halts once the
+    /// solver's best-response gap drops to or below this value.
+    pub target_exploitability: Option<f64>,
+    /// How often (in iterations) to check exploitability when `target_exploitability`
+    /// is set. Default 500. Lower = earlier detection but more BR traversal cost.
+    pub exploitability_check_interval: Option<usize>,
 }
 
 pub async fn start_postflop_solve(
@@ -1361,6 +1383,25 @@ pub async fn start_postflop_solve(
         max_raises_per_street: max_raises,
     };
 
+    // Parse optional subgame entry (turn/river card).
+    let start = match (&req.turn_card, &req.river_card) {
+        (None, None) => SubgameStart::Flop,
+        (Some(t), None) => {
+            let turn = parse_card(t).map_err(ApiError::bad_request)?;
+            SubgameStart::Turn(turn)
+        }
+        (Some(t), Some(r)) => {
+            let turn = parse_card(t).map_err(ApiError::bad_request)?;
+            let river = parse_card(r).map_err(ApiError::bad_request)?;
+            SubgameStart::River([turn, river])
+        }
+        (None, Some(_)) => {
+            return Err(ApiError::bad_request(
+                "river_card requires turn_card to also be set",
+            ));
+        }
+    };
+
     let config = PostflopConfig {
         flop: flop_arr,
         pot: req.pot,
@@ -1369,6 +1410,7 @@ pub async fn start_postflop_solve(
         oop_range: req.oop_range.clone(),
         ip_range: req.ip_range.clone(),
         num_buckets: 10,
+        start,
     };
 
     let job_id = uuid::Uuid::new_v4().to_string();
@@ -1385,6 +1427,10 @@ pub async fn start_postflop_solve(
     let jobs = state.jobs.clone();
     let jid = job_id.clone();
     let flop_strs = req.flop.clone();
+    let locked_nodes = req.locked_nodes.clone().unwrap_or_default();
+    let use_linear_cfr = req.use_linear_cfr.unwrap_or(false);
+    let target_exploitability = req.target_exploitability;
+    let exploitability_check_interval = req.exploitability_check_interval.unwrap_or(500);
 
     tokio::task::spawn_blocking(move || {
         let update_progress = |msg: &str, pct: f64, step: usize| {
@@ -1409,12 +1455,35 @@ pub async fn start_postflop_solve(
         update_progress("Building game tree...", 25.0, 2);
         let trainer_config = TrainerConfig {
             iterations,
-            use_cfr_plus: true,
+            use_cfr_plus: !use_linear_cfr,
             use_chance_sampling: true,
             print_interval: 0,
+            use_linear_cfr,
+            target_exploitability,
+            exploitability_check_interval,
+            ..Default::default()
         };
 
-        let solver = train_with_callback(&game, &trainer_config, |iter, total| {
+        // Install any pre-specified node locks before training.
+        let mut solver = CfrSolver::new();
+        let num_locks = locked_nodes.len();
+        for (key, strat) in &locked_nodes {
+            solver.lock_node(key, strat.clone());
+        }
+        if num_locks > 0 {
+            update_progress(
+                &format!("Installed {} locked node(s)", num_locks),
+                28.0,
+                2,
+            );
+        }
+
+        // Track the final reported iteration so the UI can show where the
+        // solver actually stopped (useful when target_exploitability triggers
+        // early termination).
+        let iters_used = std::sync::atomic::AtomicUsize::new(0);
+        train_on(&mut solver, &game, &trainer_config, |iter, total| {
+            iters_used.store(iter, std::sync::atomic::Ordering::Relaxed);
             let pct = 25.0 + 70.0 * (iter as f64 / total as f64);
             update_progress(
                 &format!("MCCFR iteration {}/{}...", iter, total),
@@ -1422,10 +1491,14 @@ pub async fn start_postflop_solve(
                 3,
             );
         });
+        let iters_used = iters_used.load(std::sync::atomic::Ordering::Relaxed);
 
         // Step 3: Extract strategies
         update_progress("Extracting strategies...", 95.0, 4);
         let strat_sets = extract_postflop_strategies(&game, &solver);
+
+        // Measure final exploitability for the UI.
+        let final_exploit = solver.exploitability(&game);
 
         let strategies: Vec<Value> = strat_sets.iter().map(|set| {
             json!({
@@ -1444,7 +1517,11 @@ pub async fn start_postflop_solve(
                         "flop": flop_strs,
                         "strategies": strategies,
                         "iterations": iterations,
+                        "iterations_used": iters_used,
+                        "exploitability": final_exploit,
                         "num_info_sets": solver.nodes.len(),
+                        "num_locked_nodes": num_locks,
+                        "solver": if use_linear_cfr { "Linear CFR" } else { "CFR+" },
                     }),
                 },
             );
@@ -1531,7 +1608,7 @@ pub async fn cfr_visualize(
                 // Snapshot info set states
                 let mut info_set_states: Vec<Value> = Vec::new();
                 for key in &tracked_keys {
-                    if let Some(node) = solver.nodes.get(key) {
+                    if let Some(node) = solver.nodes.get(key.as_str()) {
                         let strategy = node.current_strategy_readonly();
                         let avg_strategy = node.average_strategy();
                         let actions = action_names_for(key);

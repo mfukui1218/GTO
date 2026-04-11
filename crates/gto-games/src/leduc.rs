@@ -476,6 +476,7 @@ mod tests {
             use_cfr_plus: false,
             use_chance_sampling: false,
             print_interval: 0,
+            ..Default::default()
         };
         let solver = train(&game, &config);
         let exploit = solver.exploitability(&game);

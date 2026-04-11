@@ -66,6 +66,30 @@ pub struct TrainerConfig {
     pub use_cfr_plus: bool,
     pub use_chance_sampling: bool,
     pub print_interval: usize,
+    /// Use Discount CFR (Brown & Sandholm 2019) instead of vanilla/CFR+.
+    /// Converges 10-100x faster than CFR+ on the same number of iterations.
+    /// When enabled, `use_cfr_plus` is ignored.
+    pub use_linear_cfr: bool,
+    /// Discount CFR alpha (positive-regret weight exponent). Default: 1.5.
+    pub linear_alpha: f32,
+    /// Discount CFR beta (negative-regret weight exponent). Default: 0.0.
+    pub linear_beta: f32,
+    /// Discount CFR gamma (cumulative-strategy weight exponent). Default: 2.0.
+    pub linear_gamma: f32,
+    /// Optional early-stop target: training halts as soon as measured
+    /// exploitability drops at or below this value (absolute, in game-value
+    /// units — e.g. `0.01` for 1% of a unit bet). `None` disables the check
+    /// and always trains the full `iterations` count.
+    ///
+    /// PioSolver-style usage: set to a small fraction of the pot (e.g.
+    /// `0.005` of pot-normalized units) to auto-stop once the solver reaches
+    /// "human-indistinguishable" precision, saving time on easy spots.
+    pub target_exploitability: Option<f64>,
+    /// How often (in iterations) to evaluate exploitability when
+    /// `target_exploitability` is set. Exploitability computation is expensive
+    /// (full best-response traversal), so this should not be too small.
+    /// Default: 500.
+    pub exploitability_check_interval: usize,
 }
 
 impl Default for TrainerConfig {
@@ -75,6 +99,12 @@ impl Default for TrainerConfig {
             use_cfr_plus: false,
             use_chance_sampling: false,
             print_interval: 10_000,
+            use_linear_cfr: false,
+            linear_alpha: 1.5,
+            linear_beta: 0.0,
+            linear_gamma: 2.0,
+            target_exploitability: None,
+            exploitability_check_interval: 500,
         }
     }
 }
@@ -92,24 +122,61 @@ where
 pub fn train_with_callback<G: Game + Sync, F: FnMut(usize, usize)>(
     game: &G,
     config: &TrainerConfig,
-    mut on_progress: F,
+    on_progress: F,
 ) -> CfrSolver
 where
     G::State: Send,
 {
     let mut solver = CfrSolver::new();
-    let mut cumulative_value = 0.0;
+    train_on(&mut solver, game, config, on_progress);
+    solver
+}
+
+/// Run CFR training on an existing `CfrSolver`.
+///
+/// Use this when you need to pre-configure the solver (e.g., install node locks
+/// via `CfrSolver::lock_node()`) before training. The solver is mutated in place.
+pub fn train_on<G: Game + Sync, F: FnMut(usize, usize)>(
+    solver: &mut CfrSolver,
+    game: &G,
+    config: &TrainerConfig,
+    mut on_progress: F,
+) where
+    G::State: Send,
+{
+    let mut cumulative_value = 0.0f64;
     // Report progress roughly 20 times during training
     let report_interval = (config.iterations / 20).max(1);
+    let check_interval = config.exploitability_check_interval.max(1);
 
     for i in 1..=config.iterations {
-        let value = match (config.use_chance_sampling, config.use_cfr_plus) {
-            (true, true) => solver.iterate_chance_sampling_plus(game),
-            (true, false) => solver.iterate_chance_sampling(game),
-            (false, true) => solver.iterate_plus(game),
-            (false, false) => solver.iterate(game),
+        let value = if config.use_linear_cfr {
+            if config.use_chance_sampling {
+                solver.iterate_chance_sampling_discount(
+                    game,
+                    i,
+                    config.linear_alpha,
+                    config.linear_beta,
+                    config.linear_gamma,
+                )
+            } else {
+                solver.iterate_discount(
+                    game,
+                    i,
+                    config.linear_alpha,
+                    config.linear_beta,
+                    config.linear_gamma,
+                )
+            }
+        } else {
+            match (config.use_chance_sampling, config.use_cfr_plus) {
+                (true, true) => solver.iterate_chance_sampling_plus(game),
+                (true, false) => solver.iterate_chance_sampling(game),
+                (false, true) => solver.iterate_plus(game),
+                (false, false) => solver.iterate(game),
+            }
         };
-        cumulative_value += value;
+        cumulative_value += value as f64;
 
         if config.print_interval > 0 && i % config.print_interval == 0 {
             let avg_value = cumulative_value / i as f64;
@@ -120,10 +187,24 @@ where
             );
         }
 
+        // Dynamic iteration control: if a target exploitability is set, sample
+        // it periodically and stop early when the target is reached. The check
+        // is skipped on iteration 0 and spaced out to amortize the cost of the
+        // best-response traversal.
+        if let Some(target) = config.target_exploitability {
+            if i % check_interval == 0 {
+                let exploit = solver.exploitability(game);
+                if exploit <= target {
+                    // Final progress tick at the stopped iteration so callers
+                    // know exactly where training halted.
+                    on_progress(i, config.iterations);
+                    return;
+                }
+            }
+        }
+
         if i % report_interval == 0 || i == config.iterations {
             on_progress(i, config.iterations);
         }
     }
-
-    solver
 }
